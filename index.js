@@ -3086,8 +3086,8 @@ async function callIndependentAPI(prompt) {
     };
 
     const normalizeOpenAIMessages = (input) => {
-        if (Array.isArray(input)) return input; 
-        return [{ role: 'user', content: String(input) }]; 
+        if (Array.isArray(input)) return input;
+        return [{ role: 'user', content: String(input) }];
     };
 
     // 🛡️ 定义通用防屏蔽设置 (Gemini 专用)
@@ -3097,7 +3097,7 @@ async function callIndependentAPI(prompt) {
         { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
         { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
     ];
-    
+
     // 获取配置信息
     const apiKey = API_CONFIG.apiKey;
     let targetUrl = API_CONFIG.apiUrl.trim().replace(/\/+$/, '');
@@ -3105,16 +3105,46 @@ async function callIndependentAPI(prompt) {
     const currentModel = API_CONFIG.model || 'gpt-3.5-turbo';
     const isGemini = currentModel.toLowerCase().includes('gemini');
 
+    // ✨ 1. URL 协议头自动补全
+    if (targetUrl && !targetUrl.match(/^https?:\/\//i)) {
+        // 判断是否为本地地址或包含端口号
+        if (targetUrl.match(/^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)/i) || targetUrl.includes(':')) {
+            targetUrl = 'http://' + targetUrl;
+            console.log(`🔧 [URL修复] 检测到本地地址，自动补全协议头: ${targetUrl}`);
+        } else {
+            targetUrl = 'https://' + targetUrl;
+            console.log(`🔧 [URL修复] 自动补全协议头: ${targetUrl}`);
+        }
+    }
+
     // -------------------------------------------------------
     // 方案 A：酒馆代理 (Plan A - Tavern Proxy)
     // -------------------------------------------------------
     const runTavernProxy = async () => {
         console.log('🏠 [Plan A] 正在尝试酒馆后端代理...');
-        const csrfToken = await getCsrfToken();
-        
-        // 构建 URL
+
+        // ✨ 3. CSRF 容错处理
+        let csrfToken = '';
+        try {
+            csrfToken = await getCsrfToken();
+        } catch (csrfError) {
+            console.warn('⚠️ [CSRF] 获取令牌失败，继续尝试请求 (某些环境可能不需要):', csrfError.message);
+        }
+
+        // ✨ 2. 智能路径拼接
         let proxyUrl = targetUrl;
-        if (provider !== 'gemini' && !proxyUrl.endsWith('/v1')) proxyUrl += '/v1';
+
+        // DeepSeek 特殊处理
+        if (provider === 'deepseek' && !proxyUrl.includes('deepseek')) {
+            proxyUrl = 'https://api.deepseek.com';
+            console.log('🔧 [URL修复] 检测到 DeepSeek provider，使用官方 URL');
+        }
+
+        // OpenAI 兼容协议的 /v1 拼接
+        if (provider === 'openai' && !proxyUrl.endsWith('/v1') && !proxyUrl.includes('/chat/completions')) {
+            proxyUrl += '/v1';
+            console.log('🔧 [URL修复] OpenAI 协议自动追加 /v1');
+        }
 
         let requestPrompt = prompt;
         // ⚠️ 这里的 requestBody 是发给酒馆后端的
@@ -3171,26 +3201,34 @@ async function callIndependentAPI(prompt) {
         console.log('🌍 [Plan B] 正在尝试浏览器直连...');
         let headers = { 'Content-Type': 'application/json' };
         let payload = {};
+        let directUrl = targetUrl; // 使用已经修复过协议头的 URL
 
         // 1. 构建请求体
         if (provider === 'gemini') {
             // --- Gemini 官方协议 ---
-            if (!targetUrl.includes('generateContent')) {
+            if (!directUrl.includes('generateContent')) {
                 let model = currentModel.replace(/^models\//, '');
-                targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+                directUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
             }
-            const url = new URL(targetUrl);
-            url.searchParams.set('key', apiKey);
-            let directUrl = url.toString();
-            
+
+            // ✨ URL 安全包装（处理可能的 Invalid URL 错误）
+            try {
+                const url = new URL(directUrl);
+                url.searchParams.set('key', apiKey);
+                directUrl = url.toString();
+            } catch (urlError) {
+                console.error('❌ [URL错误] Gemini URL 构建失败:', urlError.message);
+                throw new Error(`无效的 Gemini URL: ${directUrl}`);
+            }
+
             const finalStringPrompt = convertPromptToString(userPrompt);
             payload = {
                 contents: [{ parts: [{ text: finalStringPrompt }] }],
-                // ✨ 补丁 2：官方协议防屏蔽
-                safetySettings: GEMINI_SAFETY_SETTINGS, 
-                generationConfig: { 
-                    temperature: API_CONFIG.temperature || 0.5, 
-                    maxOutputTokens: (API_CONFIG.maxTokens > 8192) ? API_CONFIG.maxTokens : 8192 
+                // ✨ 4. Gemini 防屏蔽设置
+                safetySettings: GEMINI_SAFETY_SETTINGS,
+                generationConfig: {
+                    temperature: API_CONFIG.temperature || 0.5,
+                    maxOutputTokens: (API_CONFIG.maxTokens > 8192) ? API_CONFIG.maxTokens : 8192
                 }
             };
             // 发送
@@ -3203,9 +3241,14 @@ async function callIndependentAPI(prompt) {
 
         } else {
             // --- OpenAI 兼容协议 (中转) ---
-            if (!targetUrl.includes('/chat/completions')) {
-                if (!targetUrl.endsWith('/v1')) targetUrl += '/v1';
-                targetUrl += '/chat/completions';
+            // ✨ 2. 智能路径拼接（浏览器直连模式）
+            if (!directUrl.includes('/chat/completions')) {
+                // 只有不包含 /v1 和 /chat/completions 时才追加
+                if (!directUrl.endsWith('/v1') && !directUrl.includes('/v1/')) {
+                    directUrl += '/v1';
+                }
+                directUrl += '/chat/completions';
+                console.log('🔧 [URL修复] 浏览器直连模式自动拼接路径:', directUrl);
             }
             if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
             
@@ -3216,7 +3259,7 @@ async function callIndependentAPI(prompt) {
                 stream: false
             };
 
-            // ✨ 补丁 3：中转模式下的 Gemini 防屏蔽
+            // ✨ 4. Gemini 兼容性：中转模式下的防屏蔽
             if (isGemini) {
                 console.log('🛡️ 检测到 Gemini 模型 (中转直连)，注入防屏蔽指令...');
                 payload.safety_settings = GEMINI_SAFETY_SETTINGS;
@@ -3225,9 +3268,9 @@ async function callIndependentAPI(prompt) {
             } else {
                 payload.messages = normalizeOpenAIMessages(userPrompt);
             }
-            
+
             // 发送
-            const response = await fetch(targetUrl, { method: 'POST', headers: headers, body: JSON.stringify(payload) });
+            const response = await fetch(directUrl, { method: 'POST', headers: headers, body: JSON.stringify(payload) });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
             let text = '';
