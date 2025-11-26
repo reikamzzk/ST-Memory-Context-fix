@@ -43,12 +43,12 @@ const C = {
         tableDepth: 0,
         autoSummary: false,
         autoSummaryFloor: 50,
-        autoSummaryPrompt: false,      // 自动总结发起前是否弹窗
-        autoSummarySilent: false,      // 自动总结完成后是否静默
+        autoSummaryPrompt: false,      // 自动总结发起模式（true=静默发起，false=弹窗确认）
+        autoSummarySilent: false,      // 自动总结完成模式（true=静默保存，false=弹窗编辑）
         autoBackfill: false,
         autoBackfillFloor: 10,
-        autoBackfillPrompt: false,     // 批量填表发起前是否弹窗
-        autoBackfillSilent: false,     // 批量填表完成后是否静默
+        autoBackfillPrompt: false,     // 批量填表发起模式（true=静默发起，false=弹窗确认）
+        autoBackfillSilent: false,     // 批量填表完成模式（true=静默保存，false=弹窗显示结果）
         log: true,
         pc: true,
         hideTag: true,
@@ -4127,9 +4127,9 @@ function shcf() {
                     <div style="font-weight: 600; margin-bottom: 4px; color: #1976d2; font-size: 10px;">🔔 发起模式</div>
                     <label style="display:flex; align-items:center; gap:6px; cursor:pointer; margin-bottom: 2px;">
                         <input type="checkbox" id="c-auto-bf-prompt" ${C.autoBackfillPrompt ? 'checked' : ''}>
-                        <span>📢 触发前弹窗确认 (可临时顺延)</span>
+                        <span>🤫 触发前静默发起 (直接执行)</span>
                     </label>
-                    <div style="font-size: 9px; color: #666; margin-left: 20px;">未勾选时静默发起</div>
+                    <div style="font-size: 9px; color: #666; margin-left: 20px;">未勾选时弹窗确认</div>
                 </div>
                 <div style="background: rgba(76, 175, 80, 0.08); border: 1px solid rgba(76, 175, 80, 0.2); border-radius: 4px; padding: 8px;">
                     <div style="font-weight: 600; margin-bottom: 4px; color: #388e3c; font-size: 10px;">✅ 完成模式</div>
@@ -4224,9 +4224,9 @@ function shcf() {
                     <div style="font-weight: 600; margin-bottom: 4px; color: #1976d2; font-size: 10px;">🔔 发起模式</div>
                     <label style="display:flex; align-items:center; gap:6px; cursor:pointer; margin-bottom: 2px;">
                         <input type="checkbox" id="c-auto-sum-prompt" ${C.autoSummaryPrompt ? 'checked' : ''}>
-                        <span>📢 触发前弹窗确认 (可临时顺延)</span>
+                        <span>🤫 触发前静默发起 (直接执行)</span>
                     </label>
-                    <div style="font-size: 9px; color: #666; margin-left: 20px;">未勾选时静默发起</div>
+                    <div style="font-size: 9px; color: #666; margin-left: 20px;">未勾选时弹窗确认</div>
                 </div>
 
                 <div style="background: rgba(76, 175, 80, 0.08); border: 1px solid rgba(76, 175, 80, 0.2); border-radius: 4px; padding: 8px;">
@@ -4590,9 +4590,9 @@ function omsg(id) {
             if (diff >= threshold) {
                 console.log(`⚡ [自动填表] 触发！`);
 
-                // 检查是否需要发起前弹窗
-                if (C.autoBackfillPrompt) {
-                    // 弹窗模式
+                // ✨ 发起模式逻辑（与完成模式一致）：勾选=静默，未勾选=弹窗
+                if (!C.autoBackfillPrompt) {
+                    // 弹窗模式（未勾选时）
                     showAutoTaskConfirm('backfill', currentCount, lastBfIndex, threshold).then(result => {
                         if (result.action === 'confirm') {
                             if (result.postpone > 0) {
@@ -4615,7 +4615,7 @@ function omsg(id) {
                         }
                     });
                 } else {
-                    // 静默模式：直接执行
+                    // 静默模式（勾选时）：直接执行
                     if (typeof autoRunBackfill === 'function') {
                         autoRunBackfill(lastBfIndex, currentCount);
                         hasBackfilledThisTurn = true;
@@ -4638,9 +4638,9 @@ function omsg(id) {
                 } else {
                     console.log(`🤖 [自动总结] 触发`);
 
-                    // 检查是否需要发起前弹窗
-                    if (C.autoSummaryPrompt) {
-                        // 弹窗模式
+                    // ✨ 发起模式逻辑（与完成模式一致）：勾选=静默，未勾选=弹窗
+                    if (!C.autoSummaryPrompt) {
+                        // 弹窗模式（未勾选时）
                         showAutoTaskConfirm('summary', currentCount, lastIndex, C.autoSummaryFloor).then(result => {
                             if (result.action === 'confirm') {
                                 if (result.postpone > 0) {
@@ -4660,7 +4660,7 @@ function omsg(id) {
                             }
                         });
                     } else {
-                        // 静默模式：直接执行
+                        // 静默模式（勾选时）：直接执行
                         callAIForSummary(null, null, null, C.autoSummarySilent);
                     }
                 }
