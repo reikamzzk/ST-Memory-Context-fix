@@ -4640,7 +4640,8 @@ ${contextInfo}
         return;
     }
 
-    messages.push({ role: 'user', content: `<Memory><!-- --></Memory>` });
+    // ❌ [已禁用] Pre-fill 导致 Gemini 误判返回空内容
+    // messages.push({ role: 'user', content: `<Memory><!-- --></Memory>` });
 
     console.log(`⚡ [追溯] 构建完成，准备发送 ${messages.length} 条消息`);
 
