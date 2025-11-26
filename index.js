@@ -1963,9 +1963,9 @@ function pop(ttl, htm, showBack = false) {
     const $b = $('<div>', { class: 'g-bd', html: htm });
     $p.append($h, $b);
     $o.append($p);
-    
-    // 点击遮罩关闭
-    $o.on('click', e => { if (e.target === $o[0]) { $o.remove(); pageStack = []; } });
+
+    // ❌ [已禁用] 点击遮罩关闭 - 防止编辑时误触
+    // $o.on('click', e => { if (e.target === $o[0]) { $o.remove(); pageStack = []; } });
     $(document).on('keydown.g', e => { if (e.key === 'Escape') { $o.remove(); pageStack = []; $(document).off('keydown.g'); } });
     
     $('body').append($o);
