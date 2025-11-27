@@ -232,6 +232,22 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
 
 请按照输出格式输出总结内容，严禁包含任何角色扮演的剧情描写、开场白、结束语或非剧情相关的交互性对话（如"收到"、"好的"）：`;
 
+    // ----- 4. 填表尾部阻断指令（防止AI角色扮演） -----
+    const DEFAULT_BACKFILL_FOOTER = `
+
+[系统指令] 近期剧情记录已结束。
+
+🛑 请立即停止角色扮演，不要回复最后一条消息。
+👉 现在，请作为数据库管理员，从头到尾、无一遗漏地按照填表规则分析上述所有剧情，并更新表格。`;
+
+    // ----- 5. 总结尾部阻断指令（防止AI角色扮演） -----
+    const DEFAULT_SUMMARY_FOOTER = `
+
+[系统指令] 对话记录已结束。
+
+🛑 请立即停止角色扮演，不要回复最后一条消息。
+👉 现在，请作为客观的记录者，从头到尾分析上述内容，生成结构化的剧情总结。`;
+
     // ========================================================================
     // 运行时提示词配置对象（引用上面的默认提示词）
     // ========================================================================
@@ -241,7 +257,9 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
         tablePromptPosType: 'system_end',
         tablePromptDepth: 0,
         summaryPromptTable: DEFAULT_SUM_TABLE,
-        summaryPromptChat: DEFAULT_SUM_CHAT
+        summaryPromptChat: DEFAULT_SUM_CHAT,
+        backfillFooter: DEFAULT_BACKFILL_FOOTER,
+        summaryFooter: DEFAULT_SUMMARY_FOOTER
     };
 
     // ========================================================================
@@ -3023,17 +3041,21 @@ ${currentTableData ? currentTableData : "（表格为空）"}
         logMsg = '📝 表格总结';
     }
 
-    // ✨ [关键修复] 追加尾部阻断指令 (Footer Injection)
+    // ✨ [关键修复] 追加尾部阻断指令 (Merge 模式 - 兼容 Gemini 中转 API)
     // 防止 AI 误读最后一条消息而继续角色扮演
-    messages.push({
-        role: 'system',
-        content: `[系统指令] 对话记录已结束。
+    // 许多 Gemini 中转服务严格要求对话必须以 User 角色结尾，因此将指令合并到最后一条 User 消息中
+    const footerText = PROMPTS.summaryFooter || DEFAULT_SUMMARY_FOOTER;
+    const lastMsg = messages[messages.length - 1];
 
-🛑 请立即停止角色扮演！
-👉 现在，请严格遵守记忆表格填表指南及各表格记录规则开始直接进行表格更新内容,请勿回复正文或思考的与表格更新的无关文字，请直接开始输出更新各类表格：。`
-    });
-
-    console.log('✅ [尾部注入] 已追加角色扮演阻断指令（总结模式），防止 AI 误读');
+    if (lastMsg && lastMsg.role === 'user') {
+        // 方案 A：合并到最后一条 User 消息 (最稳妥)
+        lastMsg.content += footerText;
+        console.log('✅ [尾部注入] 已合并阻断指令到末尾 User 消息（Merge 模式，总结）');
+    } else {
+        // 方案 B：最后不是 User，新建一条 User 消息
+        messages.push({ role: 'user', content: footerText });
+        console.log('✅ [尾部注入] 已追加 User 阻断消息（总结）');
+    }
 
     console.log(logMsg);
     
@@ -4144,6 +4166,26 @@ function shpmt() {
             <div style="font-size:10px; opacity:0.5; margin-top:4px; text-align:right;" id="pmt-desc">当前编辑：记忆表格数据的总结指令</div>
         </div>
 
+        <!-- 填表尾部阻断指令 -->
+        <div style="margin-top: 20px;">
+            <div style="margin-bottom: 8px; font-weight: 600; display:flex; justify-content:space-between; align-items:center;">
+                <span>🛑 填表尾部阻断指令</span>
+                <span style="font-size:10px; opacity:0.5; font-weight:normal;">防止AI角色扮演（合并到最后一条User消息）</span>
+            </div>
+            <textarea id="pmt-backfill-footer" style="width:100%; height:80px; padding:10px; border:1px solid rgba(0,0,0,0.1); border-radius:6px; font-size:12px; font-family:monospace; resize:vertical; background:rgba(255,255,255,0.5); box-sizing: border-box;">${esc(PROMPTS.backfillFooter)}</textarea>
+            <div style="font-size:10px; opacity:0.5; margin-top:4px;">此指令会在填表时自动追加到对话末尾，引导AI专注于数据填写而非角色扮演。</div>
+        </div>
+
+        <!-- 总结尾部阻断指令 -->
+        <div style="margin-top: 16px;">
+            <div style="margin-bottom: 8px; font-weight: 600; display:flex; justify-content:space-between; align-items:center;">
+                <span>🛑 总结尾部阻断指令</span>
+                <span style="font-size:10px; opacity:0.5; font-weight:normal;">防止AI角色扮演（合并到最后一条User消息）</span>
+            </div>
+            <textarea id="pmt-summary-footer" style="width:100%; height:80px; padding:10px; border:1px solid rgba(0,0,0,0.1); border-radius:6px; font-size:12px; font-family:monospace; resize:vertical; background:rgba(255,255,255,0.5); box-sizing: border-box;">${esc(PROMPTS.summaryFooter)}</textarea>
+            <div style="font-size:10px; opacity:0.5; margin-top:4px;">此指令会在总结时自动追加到对话末尾，引导AI生成客观的剧情总结。</div>
+        </div>
+
         <div style="display: flex; gap: 10px; margin-top: 5px;">
             <button id="reset-pmt" style="flex:1; background:rgba(108, 117, 125, 0.8); font-size:12px; padding:10px; border-radius:6px;">🔄 恢复默认</button>
             <button id="save-pmt" style="flex:2; padding:10px; font-weight:bold; font-size:13px; border-radius:6px;">💾 保存设置</button>
@@ -4209,11 +4251,15 @@ function shpmt() {
             PROMPTS.tablePromptPos = $('#pmt-table-pos').val();
             PROMPTS.tablePromptPosType = $('#pmt-table-pos-type').val();
             PROMPTS.tablePromptDepth = parseInt($('#pmt-table-depth').val()) || 0;
-            
+
             // ✨ 保存两个不同的总结提示词
             PROMPTS.summaryPromptTable = tempTablePmt;
             PROMPTS.summaryPromptChat = tempChatPmt;
-            
+
+            // ✨ 保存两个尾部阻断指令
+            PROMPTS.backfillFooter = $('#pmt-backfill-footer').val();
+            PROMPTS.summaryFooter = $('#pmt-summary-footer').val();
+
             // 移除旧的单字段，防止混淆
             delete PROMPTS.summaryPrompt;
 
@@ -4258,6 +4304,22 @@ function shpmt() {
                         </div>
                     </label>
 
+                    <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px; cursor:pointer; background:rgba(255,255,255,0.5); padding:8px; border-radius:6px;">
+                        <input type="checkbox" id="rst-backfill-footer" checked style="transform:scale(1.2);">
+                        <div style="color:${UI.tc || '#333'}">
+                            <div style="font-weight:bold;">🛑 填表尾部阻断指令</div>
+                            <div style="font-size:10px; opacity:0.8;">(防止AI角色扮演)</div>
+                        </div>
+                    </label>
+
+                    <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px; cursor:pointer; background:rgba(255,255,255,0.5); padding:8px; border-radius:6px;">
+                        <input type="checkbox" id="rst-summary-footer" checked style="transform:scale(1.2);">
+                        <div style="color:${UI.tc || '#333'}">
+                            <div style="font-weight:bold;">🛑 总结尾部阻断指令</div>
+                            <div style="font-size:10px; opacity:0.8;">(防止AI角色扮演)</div>
+                        </div>
+                    </label>
+
                     <div style="margin-top:15px; font-size:11px; color:#dc3545; text-align:center;">
                         ⚠️ 注意：点击确定后，现有内容将被覆盖！
                     </div>
@@ -4283,32 +4345,44 @@ function shpmt() {
                 const restoreTable = $('#rst-table').is(':checked');
                 const restoreSumTable = $('#rst-sum-table').is(':checked');
                 const restoreSumChat = $('#rst-sum-chat').is(':checked');
-                
+                const restoreBackfillFooter = $('#rst-backfill-footer').is(':checked');
+                const restoreSummaryFooter = $('#rst-summary-footer').is(':checked');
+
                 let msg = [];
-                
+
                 // ✅ 核心：直接引用顶部的全局常量 DEFAULT_...
-                
+
                 if (restoreTable) {
                     $('#pmt-table').val(DEFAULT_TABLE_PROMPT);
                     msg.push('填表提示词');
                 }
-                
+
                 if (restoreSumTable) {
-                    tempTablePmt = DEFAULT_SUM_TABLE; 
+                    tempTablePmt = DEFAULT_SUM_TABLE;
                     if ($('input[name="pmt-sum-type"]:checked').val() === 'table') {
                         $('#pmt-summary').val(DEFAULT_SUM_TABLE);
                     }
                     msg.push('表格总结');
                 }
-                
+
                 if (restoreSumChat) {
-                    tempChatPmt = DEFAULT_SUM_CHAT; 
+                    tempChatPmt = DEFAULT_SUM_CHAT;
                     if ($('input[name="pmt-sum-type"]:checked').val() === 'chat') {
                         $('#pmt-summary').val(DEFAULT_SUM_CHAT);
                     }
                     msg.push('聊天总结');
                 }
-                
+
+                if (restoreBackfillFooter) {
+                    $('#pmt-backfill-footer').val(DEFAULT_BACKFILL_FOOTER);
+                    msg.push('填表尾部阻断指令');
+                }
+
+                if (restoreSummaryFooter) {
+                    $('#pmt-summary-footer').val(DEFAULT_SUMMARY_FOOTER);
+                    msg.push('总结尾部阻断指令');
+                }
+
                 $o.remove();
                 
                 if (msg.length > 0) {
@@ -5062,17 +5136,21 @@ ${contextInfo}
         return;
     }
 
-    // ✨ [关键修复] 追加尾部阻断指令 (Footer Injection)
+    // ✨ [关键修复] 追加尾部阻断指令 (Merge 模式 - 兼容 Gemini 中转 API)
     // 防止 AI 误读最后一条消息而继续角色扮演
-    messages.push({
-        role: 'system',
-        content: `[系统指令] 近期剧情记录已结束。
+    // 许多 Gemini 中转服务严格要求对话必须以 User 角色结尾，因此将指令合并到最后一条 User 消息中
+    const footerText = PROMPTS.backfillFooter || DEFAULT_BACKFILL_FOOTER;
+    const lastMsg = messages[messages.length - 1];
 
-🛑 请立即停止角色扮演，不要回复最后一条消息。
-👉 现在，请作为数据库管理员，从头到尾、无一遗漏地按照填表规则分析上述所有剧情，并更新表格。`
-    });
-
-    console.log('✅ [尾部注入] 已追加角色扮演阻断指令，防止 AI 误读');
+    if (lastMsg && lastMsg.role === 'user') {
+        // 方案 A：合并到最后一条 User 消息 (最稳妥)
+        lastMsg.content += footerText;
+        console.log('✅ [尾部注入] 已合并阻断指令到末尾 User 消息（Merge 模式）');
+    } else {
+        // 方案 B：最后不是 User，新建一条 User 消息
+        messages.push({ role: 'user', content: footerText });
+        console.log('✅ [尾部注入] 已追加 User 阻断消息');
+    }
 
     // ❌ [已禁用] Pre-fill 导致 Gemini 误判返回空内容
     // messages.push({ role: 'user', content: `<Memory><!-- --></Memory>` });
@@ -5830,6 +5908,18 @@ ${contextInfo}
                             messages.push({ role: role, content: `${name}: ${content}` });
                         }
                     });
+
+                    // ✨ [关键修复] 追加尾部阻断指令 (Merge 模式 - 兼容 Gemini 中转 API)
+                    const footerText = PROMPTS.backfillFooter || DEFAULT_BACKFILL_FOOTER;
+                    const lastMsg = messages[messages.length - 1];
+
+                    if (lastMsg && lastMsg.role === 'user') {
+                        lastMsg.content += footerText;
+                        console.log('✅ [重新生成-尾部注入] 已合并阻断指令到末尾 User 消息');
+                    } else {
+                        messages.push({ role: 'user', content: footerText });
+                        console.log('✅ [重新生成-尾部注入] 已追加 User 阻断消息');
+                    }
 
                     // 重新调用 API
                     isSummarizing = true;
