@@ -4269,7 +4269,12 @@ function shcf() {
                     </label>
                     <div style="font-size: 9px; color: #666; margin-left: 20px;">未勾选时弹窗显示填表结果</div>
                 </div>
-                <div style="margin-top:6px; color:#666; font-size: 10px; text-align: center;">当前进度: 第 ${lastBf} 层</div>
+                <div style="margin-top:6px; color:#666; font-size: 10px; text-align: center; display:flex; align-items:center; gap:6px; justify-content:center;">
+                    <span>进度指针:</span>
+                    <input type="number" id="edit-last-bf" value="${lastBf}" min="0" max="${totalCount}" style="width:60px; text-align:center; padding:2px; border-radius:4px; border:1px solid rgba(0,0,0,0.2); font-size:10px;">
+                    <span>层</span>
+                    <button id="save-last-bf-btn" style="padding:2px 8px; background:#28a745; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:10px; white-space:nowrap;">修正</button>
+                </div>
             </div>
         </div>
 
@@ -4384,8 +4389,12 @@ function shcf() {
                     </div>
                     <button id="manual-sum-btn" style="padding:4px 8px; background:${UI.c}; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:bold; font-size:11px; white-space:nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">⚡ 执行</button>
                 </div>
-                <div style="font-size:9px; color:${UI.tc}; text-align:center;">
-                    上次总结至: <strong>${lastIndex}</strong> 层 |
+                <div style="font-size:9px; color:${UI.tc}; text-align:center; display:flex; align-items:center; gap:6px; justify-content:center;">
+                    <span>进度指针:</span>
+                    <input type="number" id="edit-last-sum" value="${lastIndex}" min="0" max="${totalCount}" style="width:60px; text-align:center; padding:2px; border-radius:4px; border:1px solid rgba(0,0,0,0.2); font-size:9px;">
+                    <span>层</span>
+                    <button id="save-last-sum-btn" style="padding:2px 8px; background:#28a745; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:9px; white-space:nowrap;">修正</button>
+                    <span>|</span>
                     <span id="reset-range-btn" style="cursor:pointer; text-decoration:underline;">重置进度</span>
                     <span id="reset-done-icon" style="display:none; color:green; margin-left:4px;">✔</span>
                 </div>
@@ -4447,8 +4456,86 @@ function shcf() {
             $('#man-end').val(totalCount);
             API_CONFIG.lastSummaryIndex = 0;
             try { localStorage.setItem(AK, JSON.stringify(API_CONFIG)); } catch (e) {}
-            $(this).parent().find('strong').text('0');
+            m.save(); // ✅ 修复：同步到聊天记录
+            $('#edit-last-sum').val(0); // ✅ 更新输入框显示
             $('#reset-done-icon').fadeIn().delay(1000).fadeOut();
+        });
+
+        // ✨✨✨ 新增：手动修正总结进度指针 ✨✨✨
+        $('#save-last-sum-btn').on('click', async function() {
+            const newValue = parseInt($('#edit-last-sum').val());
+
+            // 验证输入
+            if (isNaN(newValue)) {
+                await customAlert('请输入有效的数字', '错误');
+                return;
+            }
+
+            if (newValue < 0) {
+                await customAlert('进度不能为负数', '错误');
+                return;
+            }
+
+            if (newValue > totalCount) {
+                await customAlert(`进度不能超过当前总楼层数 (${totalCount})`, '错误');
+                return;
+            }
+
+            // 更新进度指针
+            API_CONFIG.lastSummaryIndex = newValue;
+
+            // 保存到 localStorage
+            try { localStorage.setItem(AK, JSON.stringify(API_CONFIG)); } catch (e) {}
+
+            // ✅ 关键步骤：同步到聊天记录元数据
+            m.save();
+
+            // 更新界面
+            $('#man-start').val(newValue);
+
+            // 成功提示
+            if (typeof toastr !== 'undefined') {
+                toastr.success(`总结进度已修正为第 ${newValue} 层`, '进度修正');
+            } else {
+                await customAlert(`✅ 总结进度已修正为第 ${newValue} 层\n\n已同步到本地和聊天记录`, '成功');
+            }
+        });
+
+        // ✨✨✨ 新增：手动修正填表进度指针 ✨✨✨
+        $('#save-last-bf-btn').on('click', async function() {
+            const newValue = parseInt($('#edit-last-bf').val());
+
+            // 验证输入
+            if (isNaN(newValue)) {
+                await customAlert('请输入有效的数字', '错误');
+                return;
+            }
+
+            if (newValue < 0) {
+                await customAlert('进度不能为负数', '错误');
+                return;
+            }
+
+            if (newValue > totalCount) {
+                await customAlert(`进度不能超过当前总楼层数 (${totalCount})`, '错误');
+                return;
+            }
+
+            // 更新进度指针
+            API_CONFIG.lastBackfillIndex = newValue;
+
+            // 保存到 localStorage
+            try { localStorage.setItem(AK, JSON.stringify(API_CONFIG)); } catch (e) {}
+
+            // ✅ 关键步骤：同步到聊天记录元数据
+            m.save();
+
+            // 成功提示
+            if (typeof toastr !== 'undefined') {
+                toastr.success(`填表进度已修正为第 ${newValue} 层`, '进度修正');
+            } else {
+                await customAlert(`✅ 填表进度已修正为第 ${newValue} 层\n\n已同步到本地和聊天记录`, '成功');
+            }
         });
         
         $('#manual-sum-btn').on('click', async function() {
