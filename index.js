@@ -662,7 +662,7 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
 
             console.log('✅ [世界书同步] 同步成功！');
             if (typeof toastr !== 'undefined') {
-                toastr.success('总结已同步到世界书 [Memory_Context_Auto]', '世界书同步');
+                toastr.success('总结已同步到世界书 [Memory_Context_Auto]', '世界书同步', { timeOut: 1000, preventDuplicates: true });
             }
             return true;
 
@@ -3157,7 +3157,7 @@ ${targetPrompt}
                 updateCurrentSnapshot();
                 
                 if (typeof toastr !== 'undefined') {
-                    toastr.success('自动总结已在后台完成并保存', '记忆表格');
+                    toastr.success('自动总结已在后台完成并保存', '记忆表格', { timeOut: 1000, preventDuplicates: true });
                 } else {
                     console.log('✅ 自动总结已静默完成');
                 }
@@ -3246,7 +3246,7 @@ function showSummaryPreview(summaryText, sourceTables, isTableMode, newIndex = n
                     if (newSummary && newSummary.trim()) {
                         $('#summary-editor').val(newSummary);
                         if (typeof toastr !== 'undefined') {
-                            toastr.success('内容已刷新', '重新生成');
+                            toastr.success('内容已刷新', '重新生成', { timeOut: 1000, preventDuplicates: true });
                         }
                     }
 
@@ -3356,18 +3356,17 @@ function showSummaryPreview(summaryText, sourceTables, isTableMode, newIndex = n
    智能双通道 API 请求函数 (v4.6.3 全面防屏蔽版)
    ========================================== */
 async function callIndependentAPI(prompt) {
-    console.log('🚀 [API-独立模式] 启动...');
+    console.log('🚀 [API-独立模式] 启动 (后端代理方案)...');
 
     // ========================================
-    // 1. 准备数据和判断协议（只通过 provider）
+    // 1. 准备数据
     // ========================================
     const model = API_CONFIG.model || 'gpt-3.5-turbo';
-    const provider = API_CONFIG.provider || 'openai';
-    const isGemini = provider === 'gemini';
+    const apiUrl = API_CONFIG.apiUrl.trim().replace(/\/+$/, ''); // 去除末尾斜杠
+    const apiKey = API_CONFIG.apiKey;
+    const maxTokens = (API_CONFIG.maxTokens && API_CONFIG.maxTokens > 0) ? API_CONFIG.maxTokens : 8192;
 
-    console.log(`🔍 [协议判断] Provider: ${provider}, 使用 ${isGemini ? 'Google' : 'OpenAI'} 格式`);
-
-    // 数据清洗：System -> User (解决 400 错误)
+    // 数据清洗：System -> User (兼容性处理)
     let rawMessages = Array.isArray(prompt) ? prompt : [{ role: 'user', content: String(prompt) }];
     const cleanMessages = rawMessages.map(m => ({
         role: m.role === 'system' ? 'user' : m.role,
@@ -3375,77 +3374,44 @@ async function callIndependentAPI(prompt) {
     }));
 
     // ========================================
-    // 2. URL 补全逻辑（根据 provider）
+    // 2. 获取 CSRF Token
     // ========================================
-    let targetUrl = API_CONFIG.apiUrl.trim().replace(/\/+$/, '');
-
-    if (isGemini) {
-        // Gemini 模式：使用 /generateContent
-        if (!targetUrl.includes('generateContent')) {
-            targetUrl += '/v1beta/models/' + model + ':generateContent';
-            console.log('🔧 [Gemini URL] 补全:', targetUrl);
-        }
-    } else {
-        // OpenAI 模式：必须使用 /chat/completions
-        if (!targetUrl.includes('/chat/completions')) {
-            // 如果没有 /v1 且不含 deepseek，先补 /v1
-            const hasVersionPath = /\/v\d+/.test(targetUrl);
-            const isDeepSeek = targetUrl.toLowerCase().includes('deepseek');
-
-            if (!hasVersionPath && !isDeepSeek) {
-                targetUrl += '/v1';
-                console.log('🔧 [OpenAI URL] 添加 /v1:', targetUrl);
-            }
-
-            targetUrl += '/chat/completions';
-            console.log('🔧 [OpenAI URL] 添加 /chat/completions:', targetUrl);
-        } else {
-            console.log('✅ [URL检测] 已包含完整路径:', targetUrl);
-        }
-    }
+    let csrfToken = '';
+    try { csrfToken = await getCsrfToken(); } catch(e) { console.warn('⚠️ CSRF获取失败', e); }
 
     // ========================================
-    // 3. Plan A: 通过酒馆后端转发
+    // 3. 构建酒馆后端代理 Payload
     // ========================================
-    async function runTavernProxy() {
-        console.log('📡 [Plan A] 尝试酒馆后端转发...');
+    // 关键点：chat_completion_source: "custom" 让酒馆认为这是个自定义 OpenAI 源
+    // proxy_password: 使用插件配置的独立 Key，而不是酒馆主界面的 Key
+    const proxyPayload = {
+        chat_completion_source: "custom",
+        custom_url: apiUrl,         // 告诉酒馆往哪里发
+        reverse_proxy: apiUrl,      // 兼容旧版酒馆
+        proxy_password: apiKey,     // ✅ 使用独立 Key！
 
-        // 获取 CSRF Token
-        let csrf = '';
-        try { csrf = await getCsrfToken(); } catch(e) { console.warn('CSRF获取失败', e); }
+        model: model,
+        messages: cleanMessages,
+        temperature: API_CONFIG.temperature || 0.5,
+        max_tokens: maxTokens,
+        stream: false,              // 插件目前不处理流式
 
-        // 构建酒馆 Payload
-        const proxyPayload = {
-            // ✅ 关键修正：provider 是 openai 时，必须用 'custom'，不能用 'gemini'
-            chat_completion_source: isGemini ? 'google' : 'custom',
+        // 其他兼容性参数
+        mode: 'chat',
+        instruction_mode: 'chat'
+    };
 
-            // 三个 URL 参数都填，确保兼容所有版本
-            custom_url: targetUrl,
-            reverse_proxy: targetUrl,
-            endpoint: targetUrl,
+    console.log(`🌐 [酒馆代理] 目标: ${apiUrl} | 模型: ${model}`);
 
-            // API Key
-            proxy_password: API_CONFIG.apiKey,
-
-            // 消息内容
-            messages: cleanMessages,
-            model: model,
-            stream: false,
-            max_tokens: 8192,
-            temperature: API_CONFIG.temperature || 0.5,
-
-            // 其他兼容字段
-            mode: 'chat',
-            instruction_mode: 'chat'
-        };
-
-        console.log('🌐 [酒馆代理] Source:', proxyPayload.chat_completion_source, '| URL:', targetUrl);
-
+    try {
+        // ========================================
+        // 4. 发送给酒馆后端
+        // ========================================
         const response = await fetch('/api/backends/chat-completions/generate', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': csrf
+                'X-CSRF-Token': csrfToken
             },
             body: JSON.stringify(proxyPayload)
         });
@@ -3457,105 +3423,27 @@ async function callIndependentAPI(prompt) {
 
         const data = await response.json();
 
+        // ========================================
+        // 5. 解析结果（兼容多种 OpenAI 格式）
+        // ========================================
         if (data.error) {
             const errMsg = data.error.message || JSON.stringify(data.error);
-            throw new Error(`中转商报错: ${errMsg}`);
+            throw new Error(`上游API报错: ${errMsg}`);
         }
 
-        // 提取内容
         let content = '';
-        if (data.choices?.[0]?.message?.content) content = data.choices[0].message.content;
-        else if (data.candidates?.[0]?.content?.parts?.[0]?.text) content = data.candidates[0].content.parts[0].text;
-        else if (data.results?.[0]?.text) content = data.results[0].text;
+        if (data.choices?.[0]?.message?.content) content = data.choices[0].message.content; // 标准 OpenAI
+        else if (data.candidates?.[0]?.content?.parts?.[0]?.text) content = data.candidates[0].content.parts[0].text; // Gemini
+        else if (data.results?.[0]?.text) content = data.results[0].text; // 旧版兼容
 
-        if (!content) throw new Error('API返回空内容');
+        if (!content) throw new Error('API返回内容为空');
 
-        console.log('✅ [Plan A] 成功');
+        console.log('✅ [独立API] 成功');
         return { success: true, summary: content };
-    }
 
-    // ========================================
-    // 4. Plan B: 浏览器直连（备用方案）
-    // ========================================
-    async function runBrowserDirect() {
-        console.log('🔄 [Plan B] 切换到浏览器直连...');
-
-        const requestBody = isGemini ? {
-            contents: cleanMessages.map(m => ({
-                role: m.role === 'user' ? 'user' : 'model',
-                parts: [{ text: m.content }]
-            }))
-        } : {
-            model: model,
-            messages: cleanMessages,
-            max_tokens: 8192,
-            temperature: API_CONFIG.temperature || 0.5,
-            stream: false
-        };
-
-        const headers = {
-            'Content-Type': 'application/json'
-        };
-
-        // 处理 API Key
-        let finalUrl = targetUrl;
-        if (API_CONFIG.apiKey) {
-            if (isGemini) {
-                // Gemini 通过 URL 参数传 Key
-                finalUrl += (finalUrl.includes('?') ? '&' : '?') + 'key=' + API_CONFIG.apiKey;
-            } else {
-                // OpenAI 通过 Header 传 Key
-                headers['Authorization'] = 'Bearer ' + API_CONFIG.apiKey;
-            }
-        }
-
-        console.log('🌐 [直连] 目标:', finalUrl);
-
-        const response = await fetch(finalUrl, {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify(requestBody)
-        });
-
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`直连失败 (${response.status}): ${errText}`);
-        }
-
-        const data = await response.json();
-
-        if (data.error) {
-            const errMsg = data.error.message || JSON.stringify(data.error);
-            throw new Error(`API报错: ${errMsg}`);
-        }
-
-        // 提取内容
-        let content = '';
-        if (data.choices?.[0]?.message?.content) content = data.choices[0].message.content;
-        else if (data.candidates?.[0]?.content?.parts?.[0]?.text) content = data.candidates[0].content.parts[0].text;
-
-        if (!content) throw new Error('API返回空内容');
-
-        console.log('✅ [Plan B] 成功');
-        return { success: true, summary: content };
-    }
-
-    // ========================================
-    // 5. 执行双通道策略（Plan A -> Plan B）
-    // ========================================
-    try {
-        return await runTavernProxy();
     } catch (e) {
-        console.warn('⚠️ [Plan A失败]', e.message);
-        try {
-            return await runBrowserDirect();
-        } catch (e2) {
-            console.error('❌ [Plan B失败]', e2.message);
-            return {
-                success: false,
-                error: `双通道均失败 - Plan A: ${e.message} | Plan B: ${e2.message}`
-            };
-        }
+        console.error('❌ [独立API失败]', e);
+        return { success: false, error: e.message };
     }
 }
         
@@ -3811,110 +3699,85 @@ function shapi() {
 $('#fetch-models-btn').on('click', async function() {
             const btn = $(this);
             const originalText = btn.text();
-            btn.text('拉取中...').prop('disabled', true);
-            
-            const apiKey = $('#api-key').val();
-            let apiUrl = $('#api-url').val().trim().replace(/\/+$/, ''); // 去掉末尾斜杠
-            const provider = $('#api-provider').val();
-            
-            // 🚨 关键修改：如果用户已经手动填了 /v1，就不要再加了！防止变成 /v1/v1
-            // 只有当它 不以 /v1 结尾 且 不是 gemini 时才加
-            if (provider !== 'gemini' && !apiUrl.endsWith('/v1')) {
-                apiUrl = apiUrl + '/v1';
-            }
-            
-            let models = [];
-            
-            // === 直连函数 ===
-            const tryDirectFetch = async () => {
-                console.log('🌍 [Plan B] 浏览器直连...');
-                let directUrl = '';
-                let headers = {};
-                
-                if (provider === 'gemini') {
-                    directUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-                } else {
-                    // 对于本地 API，直接拼接 /models
-                    directUrl = `${apiUrl}/models`;
-                    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-                }
+            btn.text('🔄...').prop('disabled', true);
 
-                const resp = await fetch(directUrl, { method: 'GET', headers: headers });
-                if (!resp.ok) throw new Error(`直连 ${resp.status}`);
-                const data = await resp.json();
-                
-                if (provider === 'gemini' && data.models) {
-                    return data.models.map(m => ({ id: m.name.replace('models/', ''), name: m.displayName }));
-                }
-                // 增强解析：有些本地API直接返回数组，不是 {data: []}
-                if (Array.isArray(data)) return data.map(m => (typeof m === 'string' ? {id:m, name:m} : m));
-                return parseOpenAIModelsResponse(data);
-            };
+            const apiKey = $('#api-key').val();
+            const apiUrl = $('#api-url').val().trim().replace(/\/+$/, ''); // 去除末尾斜杠
 
             try {
-                // === Plan A: 酒馆代理 ===
+                // ========================================
+                // 1. 获取 CSRF Token
+                // ========================================
                 const csrfToken = await getCsrfToken();
-                const requestPayload = {
-                    chat_completion_source: (provider === 'gemini') ? 'gemini' : 'custom',
-                    custom_url: apiUrl,
-                    reverse_proxy: apiUrl,
-                    proxy_password: apiKey
-                };
-                if (provider === 'gemini') { delete requestPayload.custom_url; delete requestPayload.reverse_proxy; }
 
+                // ========================================
+                // 2. 请求酒馆后端获取模型列表
+                // ========================================
                 const response = await fetch('/api/backends/chat-completions/status', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-                    body: JSON.stringify(requestPayload)
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': csrfToken
+                    },
+                    body: JSON.stringify({
+                        chat_completion_source: "custom",
+                        custom_url: apiUrl,
+                        reverse_proxy: apiUrl,
+                        proxy_password: apiKey
+                    })
                 });
 
-                if (response.ok) {
-                    const rawData = await response.json();
-                    models = parseOpenAIModelsResponse(rawData);
-                    console.log(`✅ [Plan A] 成功: ${models.length} 个模型`);
-                    
-                    // 如果是空，可能是路径不对，强行抛错切直连
-                    if (models.length === 0) throw new Error('空数据');
-                } else {
-                    throw new Error(`状态码 ${response.status}`);
+                if (!response.ok) {
+                    const errText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errText}`);
                 }
 
-            } catch (proxyError) {
-                // === Plan B: 直连 ===
-                console.warn(`⚠️ 转直连...`);
-                try {
-                    models = await tryDirectFetch();
-                    if (typeof toastr !== 'undefined') toastr.success('已通过浏览器直连获取', '成功');
-                } catch (directError) {
-                    let msg = `❌ 失败\n代理: ${proxyError.message}\n直连: ${directError.message}`;
-                    // 针对 HTTP 本地的特殊提示
-                    if (directError.message.includes('Failed to fetch') && apiUrl.includes('http:')) {
-                        msg += '\n\n💡 注意：如果是 HTTPS 酒馆，浏览器会禁止连接 HTTP 本地接口 (Mixed Content)。请尝试用 http:// 访问酒馆，或给 API 上 SSL。';
+                const data = await response.json();
+
+                // ========================================
+                // 3. 使用通用解析函数处理返回数据
+                // ========================================
+                const models = parseOpenAIModelsResponse(data);
+
+                if (models.length > 0) {
+                    const $select = $('#api-model-select');
+                    const $input = $('#api-model');
+                    $select.empty().append('<option value="__manual__">-- 手动输入 --</option>');
+
+                    models.forEach(m => {
+                        $select.append(`<option value="${m.id}">${m.name || m.id}</option>`);
+                    });
+
+                    // 自动选中当前模型
+                    if (models.map(m => m.id).includes($input.val())) $select.val($input.val());
+
+                    $input.hide(); $select.show();
+                    $select.off('change').on('change', function() {
+                        const val = $(this).val();
+                        if (val === '__manual__') { $select.hide(); $input.show().focus(); }
+                        else { $input.val(val); }
+                    });
+
+                    // ✅ 成功提示：1秒自动消失
+                    if (typeof toastr !== 'undefined') {
+                        toastr.success(`成功获取 ${models.length} 个模型`, '模型列表', { timeOut: 1000, preventDuplicates: true });
+                    } else {
+                        await customAlert(`✅ 成功获取 ${models.length} 个模型！`, '成功');
                     }
-                    await customAlert(msg, '连接失败');
-                    btn.text(originalText).prop('disabled', false);
-                    return;
+                } else {
+                    throw new Error('未找到模型列表');
                 }
-            }
 
-            if (models.length > 0) {
-                const $select = $('#api-model-select');
-                const $input = $('#api-model');
-                $select.empty().append('<option value="__manual__">-- 手动输入 --</option>');
-                models.sort((a, b) => a.id.localeCompare(b.id));
-                models.forEach(m => { $select.append(`<option value="${m.id}">${m.name || m.id}</option>`) });
-                if (models.map(m => m.id).includes($input.val())) $select.val($input.val());
-                $input.hide(); $select.show();
-                $select.off('change').on('change', function() {
-                    const val = $(this).val();
-                    if (val === '__manual__') { $select.hide(); $input.show().focus(); } else { $input.val(val); }
-                });
-                await customAlert(`✅ 成功获取 ${models.length} 个模型！`, '成功');
-            } else {
-                await customAlert('❌ 连接通了，但没找到模型。\n可能是路径不对，请检查是否多写或少写了 /v1', '列表为空');
+            } catch (e) {
+                console.error(e);
+                if (typeof toastr !== 'undefined') {
+                    toastr.error(e.message, '拉取失败');
+                } else {
+                    await customAlert('拉取失败: ' + e.message, '错误');
+                }
+            } finally {
+                btn.text(originalText).prop('disabled', false);
             }
-            
-            btn.text(originalText).prop('disabled', false);
         });
         
         $('#save-api').on('click', async function() {
@@ -4496,7 +4359,7 @@ function shcf() {
 
             // 成功提示
             if (typeof toastr !== 'undefined') {
-                toastr.success(`总结进度已修正为第 ${newValue} 层`, '进度修正');
+                toastr.success(`总结进度已修正为第 ${newValue} 层`, '进度修正', { timeOut: 1000, preventDuplicates: true });
             } else {
                 await customAlert(`✅ 总结进度已修正为第 ${newValue} 层\n\n已同步到本地和聊天记录`, '成功');
             }
@@ -4533,7 +4396,7 @@ function shcf() {
 
             // 成功提示
             if (typeof toastr !== 'undefined') {
-                toastr.success(`填表进度已修正为第 ${newValue} 层`, '进度修正');
+                toastr.success(`填表进度已修正为第 ${newValue} 层`, '进度修正', { timeOut: 1000, preventDuplicates: true });
             } else {
                 await customAlert(`✅ 填表进度已修正为第 ${newValue} 层\n\n已同步到本地和聊天记录`, '成功');
             }
@@ -5132,7 +4995,7 @@ ${rulesContent}
                      // ✅ 只有静默模式且自动保存成功后，才更新进度
                      API_CONFIG.lastBackfillIndex = end;
                      try { localStorage.setItem(AK, JSON.stringify(API_CONFIG)); } catch (e) {}
-                     if (typeof toastr !== 'undefined') toastr.success(`自动填表已完成`, '记忆表格');
+                     if (typeof toastr !== 'undefined') toastr.success(`自动填表已完成`, '记忆表格', { timeOut: 1000, preventDuplicates: true });
                  }
             } else {
                  setTimeout(() => {
@@ -5880,7 +5743,7 @@ ${rulesContent}
                             // 更新 textarea
                             $('#bf-popup-editor').val(finalOutput);
                             if (typeof toastr !== 'undefined') {
-                                toastr.success('内容已刷新', '重新生成');
+                                toastr.success('内容已刷新', '重新生成', { timeOut: 1000, preventDuplicates: true });
                             }
                         } else {
                             throw new Error('重新生成的内容为空或无效');
