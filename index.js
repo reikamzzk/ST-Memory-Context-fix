@@ -3289,9 +3289,6 @@ function showSummaryPreview(summaryText, sourceTables, isTableMode, newIndex = n
                 });
             }
 
-            m.save();
-            updateCurrentSnapshot();
-
             // ✅ 只有在用户确认保存时，才更新进度指针（仅聊天模式）
             if (!isTableMode && newIndex !== null) {
                 const currentLast = API_CONFIG.lastSummaryIndex || 0;
@@ -3301,6 +3298,10 @@ function showSummaryPreview(summaryText, sourceTables, isTableMode, newIndex = n
                     console.log(`✅ [进度更新] 总结进度已更新至: ${newIndex}`);
                 }
             }
+
+            // ✅ 关键修复：在更新进度后再保存，确保进度被写入元数据
+            m.save();
+            updateCurrentSnapshot();
 
             $o.remove();
             
@@ -4542,15 +4543,28 @@ function shcf() {
             const start = parseInt($('#man-start').val());
             const end = parseInt($('#man-end').val());
             if (isNaN(start) || isNaN(end)) { await customAlert('请输入有效的数字', '错误'); return; }
-            
+
             // ✅ 强制使用 'chat' 模式，无视上面的单选框
             const btn = $(this); const oldText = btn.text(); btn.text('⏳').prop('disabled', true);
-            
+
             // 稍微延迟执行以显示 loading
             setTimeout(async () => {
-                await callAIForSummary(start, end, 'chat');
+                const result = await callAIForSummary(start, end, 'chat');
+
+                // ✅ 修复：只有总结成功时，才更新进度指针
+                if (result && result.success) {
+                    API_CONFIG.lastSummaryIndex = end;
+                    localStorage.setItem(AK, JSON.stringify(API_CONFIG));
+
+                    // ✅ 关键修复：同步到当前聊天的元数据 (确保跨角色隔离)
+                    m.save();
+
+                    // ✅ 更新界面显示
+                    $('#man-start').val(end);
+                    $('#edit-last-sum').val(end);
+                }
+
                 btn.text(oldText).prop('disabled', false);
-                localStorage.setItem(AK, JSON.stringify(API_CONFIG));
             }, 200);
         });
 
@@ -4837,6 +4851,7 @@ function omsg(id) {
                                 // 用户选择顺延
                                 API_CONFIG.lastBackfillIndex = currentCount - threshold + result.postpone;
                                 localStorage.setItem(AK, JSON.stringify(API_CONFIG));
+                                m.save(); // ✅ 修复：同步进度到聊天记录
                                 console.log(`⏰ [批量填表] 顺延 ${result.postpone} 楼，新触发点：${API_CONFIG.lastBackfillIndex + threshold}`);
                                 if (typeof toastr !== 'undefined') {
                                     toastr.info(`批量填表已顺延 ${result.postpone} 楼`, '记忆表格');
@@ -4885,6 +4900,7 @@ function omsg(id) {
                                     // 用户选择顺延
                                     API_CONFIG.lastSummaryIndex = currentCount - C.autoSummaryFloor + result.postpone;
                                     localStorage.setItem(AK, JSON.stringify(API_CONFIG));
+                                    m.save(); // ✅ 修复：同步进度到聊天记录
                                     console.log(`⏰ [自动总结] 顺延 ${result.postpone} 楼，新触发点：${API_CONFIG.lastSummaryIndex + C.autoSummaryFloor}`);
                                     if (typeof toastr !== 'undefined') {
                                         toastr.info(`自动总结已顺延 ${result.postpone} 楼`, '记忆表格');
@@ -5899,9 +5915,6 @@ ${rulesContent}
             // 执行写入
             exe(cs);
             lastManualEditTime = Date.now();
-            m.save();
-
-            updateCurrentSnapshot();
 
             // ✅ 只有在用户确认保存时，才更新进度指针
             if (newIndex !== null) {
@@ -5909,6 +5922,10 @@ ${rulesContent}
                 try { localStorage.setItem(AK, JSON.stringify(API_CONFIG)); } catch (e) {}
                 console.log(`✅ [进度更新] 批量填表进度已更新至: ${newIndex}`);
             }
+
+            // ✅ 关键修复：在更新进度后再保存，确保进度被写入元数据
+            m.save();
+            updateCurrentSnapshot();
 
             await customAlert('✅ 数据已写入', '完成');
             $o.remove(); // 关闭弹窗
