@@ -1566,16 +1566,13 @@ function inj(ev) {
     let smartContent = '';
     let logMsgSmart = '';
 
-    if (C.enabled) {
-        // 开关开启：全量模式 (如果勾选了注入表格)
-        if (C.tableInj) { 
-            smartContent = strSummary + strTable; 
-            logMsgSmart = `📊 完整数据(智能)`;
-        }
+    // 独立判断表格注入（读写分离：不受实时记录开关影响）
+    if (C.tableInj) {
+        smartContent = strSummary + strTable;
+        logMsgSmart = "📊 完整数据(智能)";
     } else {
-        // 开关关闭：仅总结模式
-        smartContent = strSummary; 
-        logMsgSmart = `⚠️ 仅总结(智能)`;
+        smartContent = strSummary;
+        logMsgSmart = "⚠️ 仅总结(智能)";
     }
     
     // ============================================================
