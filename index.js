@@ -3231,6 +3231,9 @@ ${currentTableData ? currentTableData : "（表格为空）"}
         // 组合完整内容
         const finalContent = tableText + '\n' + statusStr;
 
+        // 获取前情提要
+        const existingSummary = m.sm.has() ? m.sm.load() : "（暂无历史总结）";
+
         // ✨✨✨ [多重 System 架构] ✨✨✨
         // System 0: NSFW Prompt（完全由用户配置决定）
         messages.push({
@@ -3239,12 +3242,16 @@ ${currentTableData ? currentTableData : "（表格为空）"}
         });
         console.log('✅ [System 0] NSFW Prompt 已写入');
 
-        // System 1: 表格数据（独立存储，避免 User 消息过长）
+        // System 1: 前情提要 + 表格数据 (合并放入 System，避免 User 过长)
+        let sys1Content = '';
+        if (existingSummary) sys1Content += '【前情提要 (历史总结)】\n' + existingSummary + '\n\n';
+        sys1Content += '【待总结的表格数据】\n\n' + finalContent;
+
         messages.push({
             role: 'system',
-            content: `【待总结的表格数据】\n\n${finalContent}`
+            content: sys1Content
         });
-        console.log('✅ [System 1] 表格数据已写入，避免 User 消息过长');
+        console.log('✅ [System 1] 前情提要 + 表格数据已写入');
 
         // User: 总结指令（精简，只包含任务要求）
         const summaryInstruction = `${targetPrompt}
@@ -5588,21 +5595,25 @@ async function autoRunBackfill(start, end, isManual = false) {
     messages[0].content = (PROMPTS.nsfwPrompt || NSFW_UNLOCK) + '\n\n' + contextBlock;
     console.log('✅ [Context注入] 角色信息和世界观已写入 System 0');
 
-    // ✨✨✨ [重构] Step 2.5: 在聊天历史前插入 System 1 - 独立存储表格数据 ✨✨✨
-    // 将表格数据作为独立的 System 消息，避免 User 消息过长
+    // ✨✨✨ [重构] Step 2.5: 在聊天历史前插入 System 1 - 存储前情提要 + 表格数据 ✨✨✨
+    // 将前情提要和表格数据作为独立的 System 消息，避免 User 消息过长
     // 注意：这里使用 splice 在 index=1 的位置插入，确保顺序为 System 0 -> System 1 -> 聊天历史
+    let sys1Content = '';
+    if (existingSummary) sys1Content += '【前情提要 (历史总结)】\n' + existingSummary + '\n\n';
+    sys1Content += '【当前表格状态】\n' + currentTableData;
+
     messages.splice(1, 0, {
         role: 'system',
-        content: currentTableData
+        content: sys1Content
     });
-    console.log('✅ [数据注入] 表格数据已写入 System 1（位于聊天历史之前），避免 User 消息过长');
+    console.log('✅ [数据注入] 前情提要和表格数据已写入 System 1（位于聊天历史之前），避免 User 消息过长');
 
     // ✨✨✨ [重构] Step 3: 构建 User 指令 - 只包含任务要求 ✨✨✨
     // 使用批量填表专用提示词
     let rulesContent = PROMPTS.backfillPrompt || DEFAULT_BACKFILL_PROMPT;
     rulesContent = rulesContent.replace(/{{user}}/gi, userName).replace(/{{char}}/gi, charName);
 
-    const finalInstruction = `${existingSummary ? '【前情提要】\n' + existingSummary + '\n\n' : ''}【填表规则】\n${rulesContent}
+    const finalInstruction = `【填表规则】\n${rulesContent}
 
 ⚡ 立即开始执行：请从头到尾分析上述所有剧情，按照规则更新表格，将结果输出在 <Memory> 标签中。`;
 
