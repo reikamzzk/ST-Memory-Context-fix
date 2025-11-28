@@ -3261,7 +3261,30 @@ ${currentTableData ? currentTableData : "（表格为空）"}
 
     console.log('✅ [Instruction-Last] 总结任务已采用后置指令模式');
     console.log(logMsg);
-    
+
+    // ============================================================
+    // ✨✨✨【终极清洗】API请求前最后一道防线 ✨✨✨
+    // ============================================================
+
+    // 1. 过滤掉内容为空的消息 (防止 400 Bad Request)
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (!messages[i].content || !messages[i].content.trim()) {
+            messages.splice(i, 1);
+        }
+    }
+
+    // 2. 确保最后一条消息必须是 User (防止 CORS/400 报错)
+    // 很多 API (如 Claude, 反代) 严禁 Assistant/System 结尾
+    const finalMsg = messages[messages.length - 1];
+    if (!finalMsg || finalMsg.role !== 'user') {
+        console.warn('⚠️ [自动修复] 检测到请求结尾不是User，已强制追加指令以通过API校验');
+        messages.push({
+            role: 'user',
+            content: '请继续执行上述总结任务。'
+        });
+    }
+    // ============================================================
+
     window.Gaigai.lastRequestData = {
         chat: JSON.parse(JSON.stringify(messages)),
         timestamp: Date.now(),
