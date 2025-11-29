@@ -1,5 +1,5 @@
 // ========================================================================
-// 记忆表格 v1.1.12
+// 记忆表格 v1.1.13
 // SillyTavern 记忆管理系统 - 提供表格化记忆、自动总结、批量填表等功能
 // ========================================================================
 (function() {
@@ -12,10 +12,10 @@
     }
     window.GaigaiLoaded = true;
 
-    console.log('🚀 记忆表格 v1.1.12 启动');
+    console.log('🚀 记忆表格 v1.1.13 启动');
 
     // ==================== 全局常量定义 ====================
-    const V = 'v1.1.12';
+    const V = 'v1.1.13';
     const SK = 'gg_data';              // 数据存储键
     const UK = 'gg_ui';                // UI配置存储键
     const PK = 'gg_prompts';           // 提示词存储键
@@ -33,6 +33,7 @@
 const C = {
         enabled: true,
         filterTags: '',
+        filterMode: 'blacklist', // 'blacklist' (屏蔽) 或 'whitelist' (仅保留)
         contextLimit: false,
         contextLimitCount: 30,
         uiFold: false,
@@ -83,11 +84,11 @@ let API_CONFIG = {
     // ----- 1. 填表提示词 (AI记忆表格填写规则) -----
     const DEFAULT_TABLE_PROMPT = `🔴🔴🔴 记忆表格填表指南 🔴🔴🔴
     
-你除剧情扮演外,还需在后台作为一名静默的数据库管理员。你的目标是：**能合并的行绝对不新增！能追加的字绝对不分行！**
+你必须需在后台作为一名静默的数据库管理员。你的目标是：**能合并的行绝对不新增！能追加的字绝对不分行！**
 【强制时间线处理】
-在填写表格时，你必须按照剧情发生的时间顺序及严格遵守各表格记录规则进行记录。
+🛑 在填写表格时，你必须按照剧情发生的时间顺序及严格遵守各表格记录规则进行记录。
 🛑 严禁只记录最近的剧情而遗漏早期剧情！
-请确保从对话开始到当前的所有符合各表格记录规则的剧情信息都被完整记录到表格中。
+🛑 请确保从对话开始到当前的所有符合各表格记录规则的剧情信息都被完整记录到表格中。
 
 【核心逻辑判定流程】(每次填表前必须在内心执行此流程)
 
@@ -191,9 +192,9 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
 2. 重点关注角色状态变化、物品流向及关键剧情节点。
 
 【输出格式要求】
-- 必须以"• "开头，分条列出重要事件。
-- 语言风格：客观、简练、使用过去式。
-- 严禁编造原文中不存在的内容。`;
+🛑 必须以"• "开头，分条列出重要事件。
+🛑  语言风格：客观、简练、使用过去式。
+🛑 严禁编造原文中不存在的内容。`;
 
     // ----- 3. 聊天历史总结提示词 (用于总结对话历史) -----
     const DEFAULT_SUM_CHAT = `--------------------------------------
@@ -204,10 +205,10 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
 📝 你的任务是：根据上述对话历史，生成结构化的剧情总结。
 
 【强制时间线处理】
-你必须采用严格的线性叙事，从对话记录的第一行开始阅读，一直总结到最后一行。
 🛑 严禁只总结最近的剧情！
 🛑 严禁遗漏开头的背景铺垫！
-请按时间顺序还原整个故事的起承转合。
+🛑 严禁遗漏中间转折或高潮剧情！
+🛑 仅对未总结记录的剧情内容,进行从头到尾的梳理总结,严禁重复已经总结的内容和剧情!
 
 【核心原则】
 1. 绝对客观：严禁使用主观、情绪化或动机定性的词汇（如"温柔"、"恶意"、"诱骗"），仅记录可观察的事实与结果。
@@ -220,12 +221,12 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
    - 仅记录 {{char}} 与 {{user}} 的关键互动、承诺约定及重要事件。
    - 忽略日常闲聊（如吃饭、发呆），只保留推动剧情的节点。
    - 同一天的剧情请合并为一段描述。
-   - 格式为：x年x月x日+时间+地点+角色人物名称+事件
+   - 格式为：x年x月x日·HH:mm某角色人物名称在某地点发生了什么事件造成了什么结果/正在处于什么节点
 
 2. 支线追踪：
    - 记录 NPC 的独立行动轨迹、或 NPC 与主角的交互。
    - 明确区分不同势力的行动线，不要混淆。
-   - 格式为：x年x月x日+时间+地点+角色人物名称+事件
+   - 格式为：x年x月x日·HH:mm某角色人物名称在某地点发生了什么事件造成了什么结果/正在处于什么节点
 
 3. 关键变动（如有）：
    - 角色状态变化（如受伤、死亡、失忆、囚禁）。
@@ -239,18 +240,27 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
 
 请按照输出格式输出总结内容，严禁包含任何角色扮演的剧情描写、开场白、结束语或非剧情相关的交互性对话（如"收到"、"好的"）：`;
 
-    // ----- 4. 批量/追溯填表提示词 (用于历史回溯模式) -----
-    const DEFAULT_BACKFILL_PROMPT = `🔴🔴🔴 历史回溯填表指南 🔴🔴🔴
+    // ----- 4. 批量/追溯填表提示词 -----
+    const DEFAULT_BACKFILL_PROMPT = `🔴🔴🔴 历史记录填表指南 🔴🔴🔴
 
-你现在处于历史回溯模式。你的目标是：**能合并的行绝对不新增！能追加的字绝对不分行！**
+你现在处于【历史补全模式】。你的任务是将一段“未被记录的剧情切片”整理入库。
+你的目标是：**能合并的行绝对不新增！能追加的字绝对不分行！**
+
+【核心工作范围定义】
+1. **参考资料**：System 消息中的【前情提要】和【当前表格状态】。这是**已知过去**，严禁重复记录！
+2. **工作对象**：User/System 消息中提供的**对话历史记录**。这是**待处理区域**。
 
 【核心指令】
-你必须将以上最开头的第一句剧情读到最后一句剧情，将整段历史中发生的从头到尾所有符合表格记录规则的事件整理入库，严禁遗漏早期剧情，并自动合并同类项。
+请像扫描仪一样，**从工作对象的第一行开始，逐行阅读到最后一行**。
+对于每一个剧情点，执行以下判断：
+- ❓ 该事件是否已存在于【参考资料】中？
+  - ✅ 是 -> **跳过** (严禁重复！)
+  - ❌ 否 -> **记录** (这是新信息！)
 
 【强制时间线处理】
-在填写表格时，你必须按照剧情发生的时间顺序及严格遵守各表格记录规则进行记录。
-🛑 严禁只记录最近的剧情而遗漏早期剧情！
-请确保从对话开始到当前的所有符合各表格记录规则的剧情信息都被完整记录到表格中。
+🛑 **严禁偷懒！** 必须包含从该片段**开头**发生的所有未记录事件，不可只记录片段结尾的剧情。
+🛑 **严禁幻觉！** 严禁脑补该片段**之前**发生的、未在文本中体现的剧情。
+🛑 在填写表格时，必须严格按照剧情发生的时间顺序。
 
 【核心逻辑判定流程】(每次填表前必须在内心执行此流程)
 
@@ -391,6 +401,7 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
     let lastManualEditTime = 0; // ✨ 新增：记录用户最后一次手动编辑的时间
     let lastInternalSaveTime = 0;
     let isSummarizing = false;
+    let isInitCooling = true; // ✨ 初始化冷却：防止刚加载页面时自动触发任务
 
     // ========================================================================
     // ========== 工具函数区：弹窗、CSRF令牌等辅助功能 ==========
@@ -1478,7 +1489,51 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
 }
     
     function cleanMemoryTags(text) { if (!text) return text; return text.replace(MEMORY_TAG_REGEX, '').trim(); }
-    
+
+    /**
+     * 核心过滤函数：根据黑/白名单处理内容
+     * @param {string} content - 原始文本
+     * @returns {string} - 处理后的文本
+     */
+    function filterContentByTags(content) {
+        if (!content || !C.filterTags) return content;
+
+        const tags = C.filterTags.split(/[,，]/).map(t => t.trim()).filter(t => t);
+        if (tags.length === 0) return content;
+
+        // 🟢 模式 A: 白名单 (只保留指定标签内的内容)
+        if (C.filterMode === 'whitelist') {
+            let extracted = [];
+            let foundAny = false;
+
+            tags.forEach(t => {
+                // 匹配 <tag>...</tag> 或 <tag>... (未闭合)
+                const re = new RegExp(`<${t}(?:\\s+[^>]*)?>([\\s\\S]*?)(?:<\\/${t}>|$)`, 'gi');
+                let match;
+                while ((match = re.exec(content)) !== null) {
+                    if (match[1] && match[1].trim()) {
+                        extracted.push(match[1].trim());
+                        foundAny = true;
+                    }
+                }
+            });
+
+            // 策略：如果找到了白名单标签，就只返回标签里的内容；
+            // 如果完全没找到任何白名单标签，说明这是一条普通消息，原样返回（防止误删正常对话）
+            return foundAny ? extracted.join('\\n\\n') : content;
+        }
+
+        // ⚫ 模式 B: 黑名单 (删除指定标签及其内容) - 默认
+        else {
+            let temp = content;
+            tags.forEach(t => {
+                const re = new RegExp(`<${t}(?:\\s+[^>]*)?>[\\s\\S]*?<\\/${t}>`, 'gi');
+                temp = temp.replace(re, '');
+            });
+            return temp.trim();
+        }
+    }
+
 // ✅✅✅ 智能解析器 v3.6 (无敌兼容版)
 function prs(tx) {
     if (!tx) return [];
@@ -2393,12 +2448,80 @@ function bnd() {
         });
         
         // 全选/单选逻辑
-        $('#g-pop').off('change', '.g-select-all').on('change', '.g-select-all', function(e) {
+        // 全选逻辑优化：点击全选时，弹出对话框询问是"全显"还是"全隐"
+        $('#g-pop').off('click', '.g-select-all').on('click', '.g-select-all', async function(e) {
+            e.preventDefault(); // 阻止默认勾选行为
             e.stopPropagation();
-            const checked = $(this).prop('checked');
+
             const ti = parseInt($(this).data('ti'));
-            $(`.g-tbc[data-i="${ti}"] .g-row-select`).prop('checked', checked);
-            updateSelectedRows();
+            const sh = m.get(ti);
+            if (!sh || sh.r.length === 0) return;
+
+            // 自定义三选一弹窗
+            const id = 'select-all-dialog-' + Date.now();
+            const $overlay = $('<div>', {
+                id: id,
+                css: {
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    width: '100vw', height: '100vh',
+                    background: 'rgba(0,0,0,0.5)', zIndex: 10000005,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }
+            });
+
+            const $box = $('<div>', {
+                css: {
+                    background: '#fff', borderRadius: '8px', padding: '20px',
+                    boxShadow: '0 4px 15px rgba(0,0,0,0.3)', width: '300px',
+                    display: 'flex', flexDirection: 'column', gap: '10px'
+                }
+            });
+
+            $box.append(`<div style="font-weight:bold; margin-bottom:5px; text-align:center;">📊 批量状态操作</div>`);
+            $box.append(`<div style="font-size:12px; color:#666; margin-bottom:10px; text-align:center;">当前表格共 ${sh.r.length} 行，请选择操作：</div>`);
+
+            const btnStyle = "padding:10px; border:none; border-radius:5px; cursor:pointer; color:#fff; font-weight:bold; font-size:13px;";
+
+            // 按钮1：全部显示
+            const $btnShow = $('<button>', { text: '👁️ 全部显示 (白色)', css: btnStyle + "background:#17a2b8;" }).on('click', () => {
+                if (!summarizedRows[ti]) summarizedRows[ti] = [];
+                summarizedRows[ti] = []; // 清空该表的隐藏列表
+                finish();
+                customAlert('✅ 已将本表所有行设为显示状态', '完成');
+            });
+
+            // 按钮2：全部隐藏
+            const $btnHide = $('<button>', { text: '🙈 全部隐藏 (绿色)', css: btnStyle + "background:#28a745;" }).on('click', () => {
+                if (!summarizedRows[ti]) summarizedRows[ti] = [];
+                // 将所有行索引加入列表
+                summarizedRows[ti] = Array.from({length: sh.r.length}, (_, k) => k);
+                finish();
+                customAlert('✅ 已将本表所有行设为已总结(隐藏)状态', '完成');
+            });
+
+            // 按钮3：仅全选 (保留原有功能)
+            const $btnSelect = $('<button>', { text: '✔️ 仅全选 (不改状态)', css: btnStyle + "background:#6c757d;" }).on('click', () => {
+                $overlay.remove();
+                // 手动触发原本的全选勾选逻辑
+                const $cb = $(`.g-select-all[data-ti="${ti}"]`);
+                const isChecked = !$cb.prop('checked'); // 切换状态
+                $cb.prop('checked', isChecked);
+                $(`.g-tbc[data-i="${ti}"] .g-row-select`).prop('checked', isChecked);
+                updateSelectedRows();
+            });
+
+            const $btnCancel = $('<button>', { text: '取消', css: "padding:8px; border:1px solid #ddd; background:#fff; border-radius:5px; cursor:pointer; margin-top:5px;" }).on('click', () => $overlay.remove());
+
+            function finish() {
+                saveSummarizedRows();
+                m.save();
+                refreshTable(ti);
+                $overlay.remove();
+            }
+
+            $box.append($btnShow, $btnHide, $btnSelect, $btnCancel);
+            $overlay.append($box);
+            $('body').append($overlay);
         });
         
         $('#g-pop').off('change', '.g-row-select').on('change', '.g-row-select', function(e) {
@@ -3119,10 +3242,10 @@ async function callAIForSummary(forceStart = null, forceEnd = null, forcedMode =
         const currentTableData = m.getTableText(); 
         
         const memoryContext = `
-【📚 前情提要 】
+【📚 前情提要(已总结的剧情) 】
 ${existingSummary}
 
-【📊 当前表格状态 (表格已记录的内容严禁重复记录)】
+【📊 当前表格状态 (已记录的剧情)】
 ${currentTableData ? currentTableData : "（表格为空）"}
 `;
         messages.push({ role: 'system', content: memoryContext });
@@ -3172,15 +3295,7 @@ ${currentTableData ? currentTableData : "（表格为空）"}
             content = cleanMemoryTags(content);
 
             // 标签过滤
-            if (C.filterTags) {
-                try {
-                    const tags = C.filterTags.split(/[,，]/).map(t => t.trim()).filter(t => t);
-                    if (tags.length > 0) {
-                        const re = new RegExp(`<(${tags.join('|')})(?:\\s+[^>]*)?>[\\s\\S]*?<\\/\\1>`, 'gi');
-                        content = content.replace(re, ''); 
-                    }
-                } catch (e) {}
-            }
+            content = filterContentByTags(content);
 
             if (content && content.trim()) {
                 const isUser = msg.is_user || msg.role === 'user';
@@ -3624,10 +3739,7 @@ async function callIndependentAPI(prompt) {
 
             // 显式传递 Authorization Header
             custom_include_headers: {
-                "Authorization": authHeader,
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://sillytavern.app",
-                "X-Title": "SillyTavern"
+                "Content-Type": "application/json"
             },
 
             model: model,
@@ -3735,9 +3847,7 @@ async function callIndependentAPI(prompt) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': authHeader,
-                'HTTP-Referer': 'https://sillytavern.app',
-                'X-Title': 'SillyTavern'
+                'Authorization': authHeader
             },
             body: JSON.stringify(requestBody)
         });
@@ -4110,9 +4220,7 @@ $('#fetch-models-btn').on('click', async function() {
 
                     // 🔥🔥🔥 核心修复：必须加上这个，否则报 401 🔥🔥🔥
                     custom_include_headers: {
-                        "Authorization": authHeader,
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://sillytavern.app"
+                        "Content-Type": "application/json"
                     }
                 };
 
@@ -4799,10 +4907,20 @@ function shcf() {
         </div>
 
         <div style="background: rgba(255,255,255,0.15); border-radius: 8px; padding: 10px; border: 1px solid rgba(255,255,255,0.2);">
-            <div style="font-weight: 600; margin-bottom: 6px;">🚫 标签内容屏蔽 (黑名单)</div>
-            <div style="font-size:10px; color:#666; margin-bottom:4px;">输入标签名(不带括号)，逗号分隔。例: <code style="background:rgba(0,0,0,0.1); padding:2px;">safe, think</code></div>
-            <input type="text" id="c-filter-tags" value="${esc(C.filterTags || '')}" placeholder="safe, thought, hidden..." style="width:100%; padding:5px; border:1px solid rgba(0,0,0,0.1); border-radius:4px; font-size:11px; font-family:monospace;">
-            <div style="font-size:10px; color:#d63031; margin-top:4px;">⚠️ 注意：被列出的标签及其内部文字将被完全删除，AI 不可见。</div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+                <div style="font-weight: 600;">🏷️ 标签内容过滤</div>
+                <div style="display:flex; gap:10px; font-size:11px;">
+                    <label style="cursor:pointer;"><input type="radio" name="c-filter-mode" value="blacklist" ${C.filterMode !== 'whitelist' ? 'checked' : ''}> 🚫 黑名单(屏蔽)</label>
+                    <label style="cursor:pointer;"><input type="radio" name="c-filter-mode" value="whitelist" ${C.filterMode === 'whitelist' ? 'checked' : ''}> ✅ 白名单(只留)</label>
+                </div>
+            </div>
+            <div style="font-size:10px; color:#666; margin-bottom:4px;">输入标签名，逗号分隔。例: <code style="background:rgba(0,0,0,0.1); padding:2px;">think, search</code></div>
+            <input type="text" id="c-filter-tags" value="${esc(C.filterTags || '')}" placeholder="标签名..." style="width:100%; padding:5px; border:1px solid rgba(0,0,0,0.1); border-radius:4px; font-size:11px; font-family:monospace;">
+            <div style="font-size:10px; color:#d63031; margin-top:4px;" id="filter-tip">
+                ${C.filterMode === 'whitelist' ?
+                '⚠️ 白名单模式：仅提取 <tag> 内的文字，丢弃其他所有内容（若未找到标签则保留原文）。' :
+                '⚠️ 黑名单模式：删除 <tag> 及其内部的所有文字。'}
+            </div>
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px;">
@@ -5191,8 +5309,9 @@ function shcf() {
             C.autoSummarySilent = $('#c-auto-sum-silent').is(':checked');
             API_CONFIG.summarySource = $('input[name="cfg-sum-src"]:checked').val();
             
-            // ✨ 保存标签黑名单
+            // ✨ 保存标签过滤配置
             C.filterTags = $('#c-filter-tags').val();
+            C.filterMode = $('input[name="c-filter-mode"]:checked').val();
 
             try { localStorage.setItem(AK, JSON.stringify(API_CONFIG)); } catch (e) {}
             C.log = $('#c-log').is(':checked');
@@ -5221,6 +5340,15 @@ function shcf() {
         
         $('#open-api').on('click', () => navTo('AI总结配置', shapi));
         $('#open-pmt').on('click', () => navTo('提示词管理', shpmt));
+
+        // ✨ 动态更新过滤模式提示文字
+        $('input[name="c-filter-mode"]').on('change', function() {
+            const mode = $(this).val();
+            const tip = mode === 'whitelist' ?
+                '⚠️ 白名单模式：仅提取 <tag> 内的文字，丢弃其他所有内容（若未找到标签则保留原文）。' :
+                '⚠️ 黑名单模式：删除 <tag> 及其内部的所有文字。';
+            $('#filter-tip').html(tip);
+        });
     }, 100);
 }
     
@@ -5357,7 +5485,7 @@ function omsg(id) {
         // ============================================================
         // 模块 A-2: 自动批量填表
         // ============================================================
-        if (C.autoBackfill) {
+        if (C.autoBackfill && !isInitCooling) { // ✨ 只有冷却期过才允许触发
             const lastBfIndex = API_CONFIG.lastBackfillIndex || 0;
             const currentCount = x.chat.length;
             const diff = currentCount - lastBfIndex;
@@ -5404,7 +5532,7 @@ function omsg(id) {
         // ============================================================
         // 模块 B: 自动总结
         // ============================================================
-        if (C.autoSummary) {
+        if (C.autoSummary && !isInitCooling) { // ✨ 只有冷却期过才允许触发
             const lastIndex = API_CONFIG.lastSummaryIndex || 0;
             const currentCount = x.chat.length;
             const newMsgCount = currentCount - lastIndex;
@@ -5509,15 +5637,8 @@ async function autoRunBackfill(start, end, isManual = false) {
         let content = msg.mes || msg.content || '';
         content = cleanMemoryTags(content);
 
-        if (C.filterTags) {
-            try {
-                const tags = C.filterTags.split(/[,，]/).map(t => t.trim()).filter(t => t);
-                if (tags.length > 0) {
-                    const re = new RegExp(`<(${tags.join('|')})(?:\\s+[^>]*)?>[\\s\\S]*?<\\/\\1>`, 'gi');
-                    content = content.replace(re, '');
-                }
-            } catch (e) {}
-        }
+        // 标签过滤
+        content = filterContentByTags(content);
 
         if (content && content.trim()) {
             const isUser = msg.is_user || msg.role === 'user';
@@ -6226,6 +6347,12 @@ function ini() {
 
     setTimeout(hideMemoryTags, 1000);
     console.log('✅ 记忆表格 v' + V + ' 已就绪');
+
+    // ✨ 3秒冷却期后解除初始化冷却，允许自动任务触发
+    setTimeout(() => {
+        isInitCooling = false;
+        console.log('✅ 初始化冷却期结束，自动任务已启用');
+    }, 3000);
 } // <--- 这里是 ini 函数的结束大括号
 
     // ===== 初始化重试机制 =====
@@ -6341,13 +6468,13 @@ setTimeout(() => {
 // ✨ 独立的追溯结果编辑弹窗
 function showBackfillEditPopup(content, newIndex = null, regenParams = null) {
     const h = `
-        <div class="g-p">
+        <div class="g-p" style="background:#fff !important; color:#333 !important;">
             <h4>📝 生成结果确认</h4>
             <p style="color:#666; font-size:11px; margin-bottom:10px;">
                 AI已生成填表指令，请确认无误后点击写入。<br>
                 支持手动修改内容。
             </p>
-            <textarea id="bf-popup-editor" style="width:100%; height:350px; padding:10px; border:1px solid #ddd; border-radius:4px; font-size:12px; font-family:inherit; resize:vertical; line-height:1.6; background:#fff; color:#333;">${esc(content)}</textarea>
+            <textarea id="bf-popup-editor" style="width:100%; height:350px; padding:10px; border:1px solid #ddd; border-radius:4px; font-size:12px; font-family:inherit; resize:vertical; line-height:1.6; background-color: #ffffff !important; color: #333333 !important;">${esc(content)}</textarea>
             <div style="margin-top:12px; display: flex; gap: 10px;">
                 <button id="bf-popup-cancel" style="padding:8px 16px; background:#6c757d; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; flex: 1;">🚫 放弃</button>
                 ${regenParams ? '<button id="bf-popup-regen" style="padding:8px 16px; background:#17a2b8; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; flex: 1;">🔄 重新生成</button>' : ''}
@@ -6415,15 +6542,8 @@ function showBackfillEditPopup(content, newIndex = null, regenParams = null) {
                         let content = msg.mes || msg.content || '';
                         content = cleanMemoryTags(content);
 
-                        if (C.filterTags) {
-                            try {
-                                const tags = C.filterTags.split(/[,，]/).map(t => t.trim()).filter(t => t);
-                                if (tags.length > 0) {
-                                    const re = new RegExp(`<(${tags.join('|')})(?:\\s+[^>]*)?>[\\s\\S]*?<\\/\\1>`, 'gi');
-                                    content = content.replace(re, '');
-                                }
-                            } catch (e) {}
-                        }
+                        // 标签过滤
+                        content = filterContentByTags(content);
 
                         if (content && content.trim()) {
                             const isUser = msg.is_user || msg.role === 'user';
@@ -6725,7 +6845,7 @@ const h = `
         $o.on('click', e => { if (e.target === $o[0]) $o.remove(); });
     }
 
-// ✨✨✨ 修复：版本更新检查函数 (v1.1.12 图标终极兼容版) ✨✨✨
+// ✨✨✨ 修复：版本更新检查函数 (v1.1.13 图标终极兼容版) ✨✨✨
     async function checkForUpdates(currentVer) {
         // 1. 获取UI元素
         const $status = $('#update-status'); // 说明页里的状态文字
