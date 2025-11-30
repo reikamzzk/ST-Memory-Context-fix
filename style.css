@@ -1,7 +1,7 @@
-/* Gaigai v1.1.11 */
+/* Gaigai v1.1.15 */
 
 :root {
-    --g-c: #9c4c4c;
+    --g-c: #888888;
     --g-o: 0.95;
 }
 
@@ -109,8 +109,6 @@
 
 .g-hd h3 {
     margin: 0;
-    color: var(--g-c);
-    font-size: 15px;
     font-weight: 600;
 }
 
@@ -269,10 +267,9 @@
     color: #fff;
 }
 
-/* 提示操作 - 琥珀色 */
-#g-reset-width { 
+/* 视图设置 - 琥珀色 */
+#g-reset-width {
     background: linear-gradient(135deg, #ffc107 0%, #ffa000 100%);
-    color: #333 !important;
     font-weight: 500;
 }
 
@@ -387,10 +384,6 @@
         padding: 6px 10px !important;
         min-height: 40px !important;
     }
-    
-    .g-hd h3 {
-        font-size: 13px !important;
-    }
 
     /* 3. 标签栏横向滑动 */
     .g-ts {
@@ -475,9 +468,9 @@
     }
     
     .g-tbl-wrap td {
-        /* 给个默认高度即可，不要加 !important 锁死 height，否则 JS 拖不动 */
-        height: 45px; 
-        min-height: 45px !important;
+        /* ✨ 修复：使用CSS变量，确保手机端也能响应行高调整 */
+        height: var(--g-rh, 45px);
+        min-height: var(--g-rh, 45px) !important;
         padding: 2px 4px !important;
     }
     
@@ -564,7 +557,7 @@
 }
 
 .g-tbl-wrap::-webkit-scrollbar-thumb:hover {
-    background: rgba(156, 76, 76, 0.85);
+    background: rgba(136, 136, 136, 0.85);
 }
 
 .g-tbl-wrap::-webkit-scrollbar-corner {
@@ -647,13 +640,13 @@
 }
 
 .g-col-resizer:hover {
-    background: rgba(156, 76, 76, 0.2) !important;
-    border-right: 2px solid rgba(156, 76, 76, 0.5) !important;
+    background: rgba(136, 136, 136, 0.2) !important;
+    border-right: 2px solid rgba(136, 136, 136, 0.5) !important;
 }
 
 .g-col-resizer:active {
-    background: rgba(156, 76, 76, 0.3) !important;
-    border-right: 2px solid #9c4c4c !important;
+    background: rgba(136, 136, 136, 0.3) !important;
+    border-right: 2px solid #888888 !important;
 }
 
 /* ========== ✅ 已总结行样式 ========== */
@@ -667,13 +660,13 @@
 
 /* ========== 选中行高亮 ========== */
 .g-row.g-selected {
-    background-color: rgba(156, 76, 76, 0.15) !important;
+    background-color: rgba(136, 136, 136, 0.15) !important;
     outline: 2px solid var(--g-c);
     outline-offset: -2px;
 }
 
 .g-row.g-selected td {
-    background-color: rgba(156, 76, 76, 0.08) !important;
+    background-color: rgba(136, 136, 136, 0.08) !important;
 }
 
 .g-row {
@@ -691,17 +684,17 @@
     vertical-align: middle !important;
     padding: 0 !important;
     margin: 0 !important;
-    
+
     border-right: 1px solid rgba(0, 0, 0, 0.15) !important;
     border-bottom: 1px solid rgba(0, 0, 0, 0.15) !important;
     background: rgba(255, 255, 255, 0.5) !important;
-    
-    /* ✨✨✨ 核心修改：高度控制 ✨✨✨ */
-    height: 24px !important;      /* 1. 默认高度 (会被 JS 拖拽覆盖) */
+
+    /* ✨✨✨ 核心修改：高度控制使用CSS变量 ✨✨✨ */
+    height: var(--g-rh, 24px) !important;      /* 1. 默认高度使用变量 (会被 JS 拖拽覆盖) */
     /* max-height: 24px !important;  <-- ❌ 必须删除这句！否则拖不动 */
     white-space: nowrap !important; /* 2. 禁止自动换行 */
-    
-    overflow: hidden !important; 
+
+    overflow: hidden !important;
     box-sizing: border-box !important;
 }
 
@@ -828,7 +821,7 @@
 }
 
 .g-e:focus::-webkit-scrollbar-thumb:hover {
-    background: rgba(156, 76, 76, 0.8);
+    background: rgba(136, 136, 136, 0.8);
 }
 
 .g-e::after {
@@ -839,7 +832,7 @@
     width: 0;
     height: 0;
     border-left: 5px solid transparent;
-    border-bottom: 5px solid rgba(156, 76, 76, 0.5);
+    border-bottom: 5px solid rgba(136, 136, 136, 0.5);
     opacity: 0;
     transition: opacity 0.2s;
     pointer-events: none;
@@ -975,7 +968,7 @@
 }
 
 #g-btn:hover {
-    background-color: rgba(156, 76, 76, 0.15);
+    background-color: rgba(136, 136, 136, 0.15);
 }
 
 #g-btn i {
@@ -1006,12 +999,12 @@ input[type="checkbox"].g-select-all:checked {
 
 /* 选中行的背景色 */
 .g-row.g-selected {
-    background-color: rgba(156, 76, 76, 0.15) !important;
+    background-color: rgba(136, 136, 136, 0.15) !important;
     outline: 2px solid var(--g-c) !important;
 }
 
 .g-row.g-selected td {
-    background-color: rgba(156, 76, 76, 0.08) !important;
+    background-color: rgba(136, 136, 136, 0.08) !important;
 }
 
 /* ========== 确保所有列都可以滚动（不固定） ========== */
@@ -1039,7 +1032,7 @@ input[type="checkbox"].g-select-all:checked {
 
 @keyframes longPressHint {
     0% { background: rgba(255, 255, 255, 0.8); }
-    100% { background: rgba(156, 76, 76, 0.3); }
+    100% { background: rgba(136, 136, 136, 0.3); }
 }
 
 /* ========== 复选框 (原生回归版) ========== */

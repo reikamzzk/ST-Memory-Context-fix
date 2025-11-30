@@ -1,5 +1,5 @@
 // ========================================================================
-// 记忆表格 v1.1.13
+// 记忆表格 v1.1.15
 // SillyTavern 记忆管理系统 - 提供表格化记忆、自动总结、批量填表等功能
 // ========================================================================
 (function() {
@@ -12,10 +12,10 @@
     }
     window.GaigaiLoaded = true;
 
-    console.log('🚀 记忆表格 v1.1.13 启动');
+    console.log('🚀 记忆表格 v1.1.15 启动');
 
     // ==================== 全局常量定义 ====================
-    const V = 'v1.1.13';
+    const V = 'v1.1.15';
     const SK = 'gg_data';              // 数据存储键
     const UK = 'gg_ui';                // UI配置存储键
     const PK = 'gg_prompts';           // 提示词存储键
@@ -27,7 +27,7 @@
     const REPO_PATH = 'gaigai315/ST-Memory-Context';  // GitHub仓库路径
 
     // ===== UI主题配置 =====
-    let UI = { c: '#9c4c4c', bc: '#ffffff', tc: '#ffffff' };
+    let UI = { c: '#888888', bc: '#ffffff', tc: '#ffffff' };
 
     // ==================== 用户配置对象 ====================
 const C = {
@@ -690,8 +690,9 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
     }
 
     /**
-     * 同步总结到世界书（对话会话专属）
+     * 同步总结到世界书（对话会话专属）- 追加模式
      * 根据唯一会话ID (gid) 动态生成世界书名称，实现对话级记忆隔离
+     * ✨ 新增：如果世界书已存在，则追加内容而不是覆盖
      * @param {string} content - 总结内容
      * @returns {Promise<boolean>} - 是否成功
      */
@@ -725,7 +726,53 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
                 console.warn('⚠️ [世界书同步] CSRF 获取失败，尝试无令牌请求');
             }
 
-            // 3. 构建世界书数据
+            const headers = {
+                'Content-Type': 'application/json'
+            };
+            if (csrfToken) {
+                headers['X-CSRF-Token'] = csrfToken;
+            }
+
+            // ✨✨✨ 第一步：获取现有世界书数据 ✨✨✨
+            let existingContent = '';
+            let worldBookExists = false;
+
+            try {
+                const getResponse = await fetch('/api/worldinfo/get', {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify({ name: worldBookName })
+                });
+
+                if (getResponse.ok) {
+                    const existingData = await getResponse.json();
+                    console.log('📚 [世界书同步] 获取到现有世界书数据');
+
+                    // ✨✨✨ 第二步：检查Entry "0"是否存在 ✨✨✨
+                    if (existingData && existingData.entries && existingData.entries["0"]) {
+                        worldBookExists = true;
+                        existingContent = existingData.entries["0"].content || '';
+                        console.log(`📚 [世界书同步] 检测到已存在的世界书，当前内容长度: ${existingContent.length} 字符`);
+                    }
+                } else {
+                    console.log('📚 [世界书同步] 世界书不存在，将创建新条目');
+                }
+            } catch (getError) {
+                console.warn('⚠️ [世界书同步] 获取现有数据失败，将创建新条目', getError);
+            }
+
+            // ✨✨✨ 第三步：合并内容 ✨✨✨
+            let finalContent = content;
+
+            if (worldBookExists && existingContent) {
+                // 追加模式：仅添加通用分隔符 (不含现实时间)
+                finalContent = existingContent + `\n\n--- 新增总结 ---\n\n` + content;
+                console.log(`📚 [世界书同步] 追加模式：合并后内容长度 ${finalContent.length} 字符`);
+            } else {
+                console.log('📚 [世界书同步] 创建模式：使用新内容');
+            }
+
+            // ✨✨✨ 第四步：构建并发送更新请求 ✨✨✨
             const payload = {
                 name: worldBookName,
                 data: {
@@ -735,14 +782,14 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
                             key: ["总结", "summary", "前情提要", "memory", "记忆"],
                             keysecondary: [],
                             comment: `[绑定对话: ${safeName}] 由记忆表格插件自动生成 v${V}`,
-                            content: content,
+                            content: finalContent,
                             constant: true,    // 常驻，确保 AI 能看到
                             vectorized: false,
                             enabled: true,
-                            position: 0,       // 插入最前面
+                            position: 3,       // ✅ 修改为 3 (示例消息后)
                             order: 100,
                             extensions: {
-                                position: 0,
+                                position: 3,   // ✅ 修改为 3 (示例消息后)
                                 exclude_recursion: false,
                                 display_index: 0,
                                 probability: 100,
@@ -752,14 +799,6 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
                     }
                 }
             };
-
-            // 4. 发送请求
-            const headers = {
-                'Content-Type': 'application/json'
-            };
-            if (csrfToken) {
-                headers['X-CSRF-Token'] = csrfToken;
-            }
 
             const response = await fetch('/api/worldinfo/edit', {
                 method: 'POST',
@@ -772,9 +811,10 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
                 throw new Error(`HTTP ${response.status}: ${errorText}`);
             }
 
-            console.log(`✅ [世界书同步] 同步成功！世界书: ${worldBookName}`);
+            const actionType = worldBookExists ? '追加' : '创建';
+            console.log(`✅ [世界书同步] ${actionType}成功！世界书: ${worldBookName}`);
             if (typeof toastr !== 'undefined') {
-                toastr.success(`总结已同步到世界书 [${worldBookName}]`, '世界书同步', { timeOut: 1000, preventDuplicates: true });
+                toastr.success(`总结已${actionType}到世界书 [${worldBookName}]`, '世界书同步', { timeOut: 1000, preventDuplicates: true });
             }
             return true;
 
@@ -991,15 +1031,22 @@ class SM {
         // 读取逻辑也微调一下，让多条总结之间有间隔，方便AI理解
         load() {
             const sumSheet = this.m.get(8);
-            if (sumSheet.r.length === 0) return '';
-            
+            if (!sumSheet || sumSheet.r.length === 0) return '';
+
             // 格式示例：
             // 【剧情总结 1】
             // ...内容...
             //
             // 【剧情总结 2】
             // ...内容...
-            return sumSheet.r.map(row => `【${row[0] || '历史片段'}】\n${row[1] || ''}`).filter(t => t).join('\n\n');
+            return sumSheet.r.map((row, i) => {
+                // ✨✨✨ 核心修复：检查第 8 号表(总结表)的第 i 行是否被标记为隐藏
+                // summarizedRows 是全局变量，存储了所有表格的隐藏行索引
+                if (typeof summarizedRows !== 'undefined' && summarizedRows[8] && summarizedRows[8].includes(i)) {
+                    return null; // 🚫 跳过被隐藏(变绿)的行
+                }
+                return `【${row[0] || '历史片段'}】\n${row[1] || ''}`;
+            }).filter(t => t).join('\n\n');
         }
         
         loadArray() { return this.m.get(8).r.map(row => ({ type: row[0] || '综合', content: row[1] || '' })); }
@@ -1393,20 +1440,231 @@ async function resetColWidths() {
             saveColWidths();
             m.save(); // ✨✨✨ 这里也要加，确保重置操作同步到平板
             await customAlert('视图已重置，请重新打开表格', '成功');
-            
+
             // 1. 清除本地
             saveColWidths();
-            
+
             // ✨✨✨ 核心修复：同步清除聊天记录里的宽度 ✨✨✨
             m.save();
-            
+
             await customAlert('列宽已重置，请重新打开表格', '成功');
-            
+
             // 自动刷新一下当前视图，不用手动重开
             if ($('#g-pop').length > 0) {
                 shw();
             }
         }
+    }
+
+    // ✨✨✨ 视图设置窗口（轻量级悬浮窗版本） ✨✨✨
+    function showViewSettings() {
+        const currentRowHeight = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--g-rh')) || 24;
+
+        // 1. 创建几乎透明的遮罩层 (让用户能看到背后表格的实时变化)
+        const $overlay = $('<div>', {
+            id: 'g-view-overlay',
+            css: {
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: 'rgba(0, 0, 0, 0.1)', // 几乎透明
+                zIndex: 10000005,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+            }
+        });
+
+        // 2. 创建小窗口
+        const $box = $('<div>', {
+            css: {
+                background: '#fff',
+                width: '320px',
+                padding: '20px',
+                borderRadius: '12px',
+                boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '15px',
+                position: 'relative'
+            }
+        });
+
+        // 3. 标题栏 (含关闭按钮)
+        const $header = $('<div>', {
+            css: {
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '5px'
+            }
+        });
+        $header.append(`<h3 style="margin:0; font-size:16px; color:#333;">📏 视图设置</h3>`);
+
+        const $closeBtn = $('<button>', {
+            text: '×',
+            css: {
+                background: 'none',
+                border: 'none',
+                fontSize: '24px',
+                cursor: 'pointer',
+                color: '#999',
+                padding: '0',
+                lineHeight: '1'
+            }
+        }).on('click', () => $overlay.remove());
+
+        $header.append($closeBtn);
+        $box.append($header);
+
+        // 4. 行高调整区域
+        const $sliderContainer = $('<div>', {
+            css: {
+                background: '#f8f9fa',
+                padding: '12px',
+                borderRadius: '8px',
+                border: '1px solid #eee'
+            }
+        });
+        $sliderContainer.append(`<div style="font-size:12px; font-weight:600; margin-bottom:8px; color:#555;">行高调整 (px)</div>`);
+
+        const $controlRow = $('<div>', {
+            css: {
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px'
+            }
+        });
+
+        // 滑块
+        const $slider = $('<input>', {
+            type: 'range',
+            min: '18',
+            max: '80',
+            value: currentRowHeight,
+            css: {
+                flex: 1,
+                cursor: 'pointer'
+            }
+        });
+
+        // 输入框
+        const $numInput = $('<input>', {
+            type: 'number',
+            min: '18',
+            max: '80',
+            value: currentRowHeight,
+            css: {
+                width: '50px',
+                textAlign: 'center',
+                padding: '4px',
+                border: '1px solid #ddd',
+                borderRadius: '4px'
+            }
+        });
+
+        $controlRow.append($slider, $numInput);
+        $sliderContainer.append($controlRow);
+        $box.append($sliderContainer);
+
+        // 5. 按钮区域
+        const $btnGroup = $('<div>', {
+            css: {
+                display: 'flex',
+                gap: '10px'
+            }
+        });
+
+        const btnStyle = {
+            flex: 1,
+            padding: '10px',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            color: '#fff',
+            fontSize: '12px',
+            fontWeight: '600'
+        };
+
+        const $btnResetWidth = $('<button>', {
+            text: '📐 重置列宽',
+            css: Object.assign({}, btnStyle, {
+                background: '#ffc107',
+                color: '#333'
+            })
+        });
+
+        const $btnResetHeight = $('<button>', {
+            text: '📏 重置行高',
+            css: Object.assign({}, btnStyle, {
+                background: '#17a2b8'
+            })
+        });
+
+        $btnGroup.append($btnResetWidth, $btnResetHeight);
+        $box.append($btnGroup);
+
+        $overlay.append($box);
+        $('body').append($overlay);
+
+        // --- 逻辑绑定 ---
+
+        // 实时更新行高
+        function updateHeight(val) {
+            const h = Math.max(18, Math.min(80, parseInt(val) || 24));
+            $slider.val(h);
+            $numInput.val(h);
+            document.documentElement.style.setProperty('--g-rh', h + 'px');
+
+            // 强制重绘(Reflow)以确保表格立即响应
+            const $tbl = $('.g-tbl-wrap table');
+            if ($tbl.length) $tbl[0].offsetHeight;
+
+            // 保存配置
+            if (!userRowHeights) userRowHeights = {};
+            userRowHeights['default'] = h;
+            m.save();
+        }
+
+        $slider.on('input', e => updateHeight(e.target.value));
+        $numInput.on('change', e => updateHeight(e.target.value));
+
+        // 按钮事件
+        $btnResetWidth.on('click', async () => {
+            userColWidths = {};
+            saveColWidths();
+            m.save();
+            await customAlert('列宽已重置，请重新打开表格', '成功');
+            $overlay.remove();
+            shw();
+        });
+
+        $btnResetHeight.on('click', async () => {
+            updateHeight(24);
+            userRowHeights = {};
+            m.save();
+            // 重置后不关闭窗口，方便用户继续调整
+        });
+
+        // 点击遮罩关闭
+        $overlay.on('click', e => {
+            if (e.target === $overlay[0]) $overlay.remove();
+        });
+
+        // ESC键关闭
+        $(document).on('keydown.viewSettings', e => {
+            if (e.key === 'Escape') {
+                $overlay.remove();
+                $(document).off('keydown.viewSettings');
+            }
+        });
+
+        // 窗口移除时清理事件
+        $overlay.on('remove', () => {
+            $(document).off('keydown.viewSettings');
+        });
     }
     
     // 已总结行管理
@@ -1876,34 +2134,27 @@ function getRoleByPosition(pos) {
 }
 
 function getInjectionPosition(pos, posType, depth, chat) {
-    const chatLength = chat ? chat.length : 0;
-    
-    if (posType === 'absolute') {
-        switch(pos) {
-            case 'system': return 0;  // 最前面
-            case 'user': return chatLength;
-            case 'assistant': return chatLength;
-            default: return 0;
+    // ✅ 优化逻辑：优先插入到 "[Start a new Chat]" 分隔符之前，作为背景设定铺垫
+    if (!chat || chat.length === 0) return 0;
+
+    for (let i = 0; i < chat.length; i++) {
+        const msg = chat[i];
+        if (!msg) continue;
+
+        // 1. 优先：插入到 "[Start a new Chat]" 分隔符之前
+        // 注意：要判断 content 是否存在，防止报错
+        if (msg.role === 'system' && msg.content && msg.content.includes('[Start a new Chat]')) {
+            return i;
         }
-    } else if (posType === 'system_end') {
-        // ✅✅ 新增：自动定位到最后一个system消息之后
-        if (!chat) return 0;
-        let lastSystemIndex = -1;
-        for (let i = 0; i < chatLength; i++) {
-            if (chat[i] && chat[i].role === 'system') {
-                lastSystemIndex = i;
-            }
-        }
-        return lastSystemIndex >= 0 ? lastSystemIndex + 1 : 0;
-    } else if (posType === 'chat') {
-        switch(pos) {
-            case 'system': return depth;
-            case 'user': return Math.max(0, chatLength - depth);
-            case 'assistant': return Math.max(0, chatLength - depth);
-            default: return Math.max(0, chatLength - depth);
+
+        // 2. 兜底：插入到第一条用户/AI消息之前 (保持原有逻辑)
+        if (msg.role === 'user' || msg.role === 'assistant') {
+            return i;
         }
     }
-    return 0;
+
+    // 全是 System 且没找到特定标记，插到最后
+    return chat.length;
 }
     
 // 终极修复：使用 TreeWalker 精准替换文本节点，绝对不触碰图片/DOM结构
@@ -1972,7 +2223,7 @@ function thm() {
         }
     } catch (e) { console.warn('读取主题配置失败'); }
     
-    if (!UI.c) UI.c = '#9c4c4c';
+    if (!UI.c) UI.c = '#888888';
     if (!UI.tc) UI.tc = '#ffffff';
     if (!UI.fs || isNaN(UI.fs) || UI.fs < 10) UI.fs = 12; 
 
@@ -2116,7 +2367,7 @@ function thm() {
         
         /* 鼠标放上去变色，提示这里可以拖 */
         .g-row-resizer:hover { 
-            background: rgba(156, 76, 76, 0.2) !important; 
+            background: rgba(136, 136, 136, 0.2) !important; 
             border-bottom: 2px solid var(--g-c) !important; 
         }
         
@@ -2138,7 +2389,51 @@ function thm() {
         .g-row.g-summarized { background-color: rgba(0, 0, 0, 0.05) !important; }
 
         .g-hd { background: ${UI.c} !important; opacity: 0.98; border-bottom: 1px solid rgba(0,0,0,0.1) !important; padding: 0 16px !important; height: 50px !important; display: flex !important; align-items: center !important; justify-content: space-between !important; flex-shrink: 0 !important; border-radius: 12px 12px 0 0 !important; }
-        .g-hd h3 { color: ${UI.tc} !important; margin: 0 !important; font-size: calc(var(--g-fs, 12px) + 4px) !important; font-weight: bold !important; text-align: center !important; flex: 1; }
+
+        /* ✨✨✨ 标题栏优化：增大字号、强制颜色跟随主题 ✨✨✨ */
+        .g-hd h3 {
+            color: ${UI.tc} !important;
+            margin: 0 !important;
+            flex: 1;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+        }
+
+        /* 2. 标题内容盒子：增加 #g-pop 前缀以覆盖全局重置 */
+        #g-pop .g-title-box {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 8px !important;
+            color: ${UI.tc} !important;
+        }
+
+        /* 3. 主标题文字：增加 #g-pop 前缀 */
+        #g-pop .g-title-box span:first-child {
+            font-size: 18px !important;       /* 增大字号 */
+            font-weight: 800 !important;
+            letter-spacing: 1px !important;
+            color: ${UI.tc} !important;       /* 强制跟随主题色 */
+        }
+
+        /* 4. 版本号标签：增加 #g-pop 前缀 & 强制颜色 */
+        #g-pop .g-ver-tag {
+            font-size: 12px !important;
+            opacity: 0.8 !important;
+            font-weight: normal !important;
+            background: rgba(0,0,0,0.1) !important;
+            padding: 2px 6px !important;
+            border-radius: 4px !important;
+            color: ${UI.tc} !important;       /* 强制跟随主题色 */
+        }
+
+        /* 修复图标颜色 */
+        #g-about-btn {
+            color: inherit !important;
+            opacity: 0.8;
+        }
+
         .g-x { background: transparent !important; border: none !important; color: ${UI.tc} !important; cursor: pointer !important; font-size: 20px !important; width: 32px !important; height: 32px !important; display: flex !important; align-items: center !important; justify-content: center !important; }
         .g-back { background: transparent !important; border: none !important; color: ${UI.tc} !important; cursor: pointer !important; font-size: var(--g-fs, 12px) !important; font-weight: 600 !important; display: flex !important; align-items: center !important; gap: 6px !important; padding: 4px 8px !important; border-radius: 4px !important; }
         .g-back:hover { background: rgba(255,255,255,0.2) !important; }
@@ -2305,7 +2600,7 @@ function shw() {
             <button id="g-bf" title="追溯历史剧情填表">⚡ 追溯</button>
             <button id="g-ex" title="导出JSON备份">📥 导出</button>
             <button id="g-im" title="从JSON恢复数据">📤 导入</button>
-            <button id="g-reset-width" title="重置列宽">📏 重置列</button>
+            <button id="g-reset-width" title="视图设置">📏 视图</button>
             <button id="g-clear-tables" title="保留总结，清空详情">🧹 清表</button>
             <button id="g-ca" title="清空所有数据">💥 全清</button>
             <button id="g-tm" title="设置外观">🎨 主题</button>
@@ -2977,18 +3272,198 @@ function bnd() {
     });
     
     $('#g-sm').off('click').on('click', () => callAIForSummary(null, null, 'table'));
-    $('#g-ex').off('click').on('click', function() { 
-        const d = { v: V, t: new Date().toISOString(), s: m.all().map(s => s.json()) }; 
-        const j = JSON.stringify(d, null, 2); 
-        const b = new Blob([j], { type: 'application/json' }); 
-        const u = URL.createObjectURL(b); 
-        const a = document.createElement('a'); 
-        a.href = u; 
-        a.download = `memory_table_${m.gid()}_${Date.now()}.json`; 
-        a.click(); 
-        URL.revokeObjectURL(u); 
-    });
-    $('#g-reset-width').off('click').on('click', resetColWidths);
+    // ✨✨✨ 新增：导出选项窗口 ✨✨✨
+    // ✨✨✨ 导出选项窗口 (轻量级模态窗) ✨✨✨
+    function showExportOptions() {
+        // 1. 创建遮罩层
+        const $overlay = $('<div>', {
+            id: 'g-export-overlay',
+            css: {
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                width: '100vw',
+                height: '100vh',
+                background: 'rgba(0, 0, 0, 0.5)',
+                zIndex: 10000005,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '20px',
+                boxSizing: 'border-box'
+            }
+        });
+
+        // 2. 创建小窗口容器
+        const $box = $('<div>', {
+            css: {
+                background: '#fff',
+                width: '320px',
+                maxWidth: '90vw',
+                padding: '20px',
+                borderRadius: '12px',
+                boxShadow: '0 10px 40px rgba(0,0,0,0.3)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+                position: 'relative',
+                transform: 'scale(1)',
+                transition: 'all 0.2s'
+            }
+        });
+
+        // 3. 标题
+        const $title = $('<h3>', {
+            text: '📥 导出备份',
+            css: {
+                margin: '0 0 8px 0',
+                fontSize: '16px',
+                fontWeight: '600',
+                textAlign: 'center',
+                color: '#333'
+            }
+        });
+
+        // 4. 提示文字
+        const $desc = $('<div>', {
+            text: '请选择要导出的内容',
+            css: {
+                fontSize: '12px',
+                color: '#666',
+                marginBottom: '8px',
+                textAlign: 'center'
+            }
+        });
+
+        // 5. 按钮样式模板
+        const btnStyle = {
+            width: '100%',
+            padding: '12px',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            color: '#fff',
+            fontWeight: '600',
+            fontSize: '13px',
+            transition: 'all 0.2s',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+        };
+
+        // 6. 导出函数封装
+        function performExport(data, filename) {
+            const exportData = {
+                v: V,
+                t: new Date().toISOString(),
+                s: data.map(s => s.json())
+            };
+            const jsonStr = JSON.stringify(exportData, null, 2);
+            const blob = new Blob([jsonStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+
+            // ✨ 关键：只移除导出窗口，不影响底下的表格
+            $overlay.remove();
+        }
+
+        // 7. 全部导出按钮
+        const $btnAll = $('<button>', {
+            html: '📦 全部导出 (含总结)',
+            css: { ...btnStyle, background: UI.c }
+        }).on('click', function() {
+            performExport(m.all(), `memory_table_all_${m.gid()}_${Date.now()}.json`);
+        }).hover(
+            function() { $(this).css('filter', 'brightness(0.9)'); },
+            function() { $(this).css('filter', 'brightness(1)'); }
+        );
+
+        // 8. 仅导出总结按钮
+        const $btnSummary = $('<button>', {
+            html: '📝 仅导出总结',
+            css: { ...btnStyle, background: '#28a745' }
+        }).on('click', function() {
+            const summarySheet = m.get(8);
+            if (!summarySheet || summarySheet.r.length === 0) {
+                customAlert('当前没有总结数据可导出', '提示');
+                return;
+            }
+            performExport([summarySheet], `memory_table_summary_${m.gid()}_${Date.now()}.json`);
+        }).hover(
+            function() { $(this).css('filter', 'brightness(0.9)'); },
+            function() { $(this).css('filter', 'brightness(1)'); }
+        );
+
+        // 9. 仅导出详情按钮
+        const $btnDetails = $('<button>', {
+            html: '📊 仅导出详情 (不含总结)',
+            css: { ...btnStyle, background: '#17a2b8' }
+        }).on('click', function() {
+            performExport(m.all().slice(0, 8), `memory_table_details_${m.gid()}_${Date.now()}.json`);
+        }).hover(
+            function() { $(this).css('filter', 'brightness(0.9)'); },
+            function() { $(this).css('filter', 'brightness(1)'); }
+        );
+
+        // 10. 取消按钮
+        const $btnCancel = $('<button>', {
+            text: '取消',
+            css: {
+                ...btnStyle,
+                background: '#6c757d',
+                marginTop: '8px'
+            }
+        }).on('click', function() {
+            $overlay.remove();
+        }).hover(
+            function() { $(this).css('filter', 'brightness(0.9)'); },
+            function() { $(this).css('filter', 'brightness(1)'); }
+        );
+
+        // 11. 提示信息
+        const $tip = $('<div>', {
+            html: `💡 提示：<br>
+                • 全部导出：包含所有9个表格<br>
+                • 仅导出总结：仅第9个总结表<br>
+                • 仅导出详情：前8个详情表`,
+            css: {
+                padding: '10px',
+                background: 'rgba(33, 150, 243, 0.1)',
+                borderRadius: '6px',
+                fontSize: '10px',
+                color: '#1976d2',
+                lineHeight: '1.5',
+                marginTop: '4px'
+            }
+        });
+
+        // 12. 组装窗口
+        $box.append($title, $desc, $btnAll, $btnSummary, $btnDetails, $btnCancel, $tip);
+        $overlay.append($box);
+        $('body').append($overlay);
+
+        // 13. 绑定点击遮罩层关闭
+        $overlay.on('click', function(e) {
+            if (e.target === $overlay[0]) {
+                $overlay.remove();
+            }
+        });
+
+        // 14. ESC键关闭
+        $(document).on('keydown.exportOverlay', function(e) {
+            if (e.key === 'Escape') {
+                $(document).off('keydown.exportOverlay');
+                $overlay.remove();
+            }
+        });
+    }
+
+    $('#g-ex').off('click').on('click', showExportOptions);
+    $('#g-reset-width').off('click').on('click', showViewSettings);
     // ✅✅ 新增：清空表格（保留总结）
     $('#g-clear-tables').off('click').on('click', async function() {
         const hasSummary = m.sm.has();
@@ -3081,6 +3556,16 @@ function bnd() {
     $('#g-toggle-sum').off('click').on('click', async function() {
         const ti = selectedTableIndex !== null ? selectedTableIndex : parseInt($('.g-t.act').data('i'));
 
+        // 1. 获取当前表格对象
+        const sh = m.get(ti);
+
+        // 2. ✨✨✨ 优先检查：空表拦截 (避免无数据时提示"请先选中行"造成困惑)
+        if (!sh || sh.r.length === 0) {
+            await customAlert('⚠️ 当前表格没有任何数据，无法执行显/隐操作。', '无数据');
+            return;
+        }
+
+        // 3. 正常逻辑：处理已有数据的表格
         if (selectedRows.length > 0) {
             // 批量切换
             if (!summarizedRows[ti]) summarizedRows[ti] = [];
@@ -3238,20 +3723,8 @@ async function callAIForSummary(forceStart = null, forceEnd = null, forcedMode =
             content: (PROMPTS.nsfwPrompt || NSFW_UNLOCK)
         });
 
-        const existingSummary = m.sm.has() ? m.sm.load() : "（暂无历史总结）";
-        const currentTableData = m.getTableText(); 
-        
-        const memoryContext = `
-【📚 前情提要(已总结的剧情) 】
-${existingSummary}
-
-【📊 当前表格状态 (已记录的剧情)】
-${currentTableData ? currentTableData : "（表格为空）"}
-`;
-        messages.push({ role: 'system', content: memoryContext });
-
-        // (Msg 2) 背景资料
-        let contextText = ''; 
+        // ✨✨✨ [第一步] 先推送背景资料 (优先让 AI 了解角色设定)
+        let contextText = '';
         let charInfo = '';
         if (ctx.characters && ctx.characterId !== undefined && ctx.characters[ctx.characterId]) {
             const char = ctx.characters[ctx.characterId];
@@ -3263,7 +3736,7 @@ ${currentTableData ? currentTableData : "（表格为空）"}
         let scanTextForWorldInfo = '';
         const targetSlice = ctx.chat.slice(startIndex, endIndex);
         targetSlice.forEach(msg => scanTextForWorldInfo += (msg.mes || msg.content || '') + '\n');
-        
+
         let triggeredLore = [];
         let worldInfoList = [];
         try {
@@ -3274,7 +3747,7 @@ ${currentTableData ? currentTableData : "（表格为空）"}
         if (worldInfoList.length > 0 && scanTextForWorldInfo) {
             const lowerText = scanTextForWorldInfo.toLowerCase();
             worldInfoList.forEach(entry => {
-                const keysStr = entry.keys || entry.key || ''; 
+                const keysStr = entry.keys || entry.key || '';
                 if (!keysStr) return;
                 const keys = String(keysStr).split(',').map(k => k.trim().toLowerCase()).filter(k => k);
                 if (keys.some(k => lowerText.includes(k))) {
@@ -3286,6 +3759,19 @@ ${currentTableData ? currentTableData : "（表格为空）"}
         if (triggeredLore.length > 0) contextText += `\n【相关世界设定】\n${triggeredLore.join('\n')}\n`;
 
         if (contextText) messages.push({ role: 'system', content: contextText });
+
+        // ✨✨✨ [第二步] 后推送记忆表格 (在了解背景后再看具体剧情)
+        const existingSummary = m.sm.has() ? m.sm.load() : "（暂无历史总结）";
+        const currentTableData = m.getTableText();
+
+        const memoryContext = `
+【📚 前情提要(已总结的剧情) 】
+${existingSummary}
+
+【📊 当前表格状态 (已记录的剧情)】
+${currentTableData ? currentTableData : "（表格为空）"}
+`;
+        messages.push({ role: 'system', content: memoryContext });
 
         // (Msg 3...N) 聊天记录
         let validMsgCount = 0;
@@ -3442,22 +3928,25 @@ ${currentTableData ? currentTableData : "（表格为空）"}
             // ✅ 第二步：强力提取核心总结内容
             console.log('📦 [总结提取] 原始长度:', cleanSummary.length);
 
-            // 尝试提取【xxx】格式的核心内容（如果存在）
-            const sectionMatch = cleanSummary.match(/【[\s\S]*?】[\s\S]*$/);
-            if (sectionMatch) {
-                // 找到了结构化总结，从第一个【开始提取
-                const startIndex = cleanSummary.indexOf('【');
-                cleanSummary = cleanSummary.substring(startIndex);
-                console.log('✅ [总结提取] 提取结构化内容，过滤前缀废话');
-            } else {
-                // 没有找到结构化格式，移除常见的开场白
-                cleanSummary = cleanSummary
-                    .replace(/^[\s\S]*?(以下是|现在|开始|首先|让我|我将|这是|好的|明白|收到|了解)[^：:\n]*[：:\n]/i, '')  // 移除开场白
-                    .replace(/^(根据|基于|综合|分析|查看|阅读).*?([，,：:]|之后)[^\n]*\n*/gim, '')  // 移除分析说明
-                    .replace(/^(注意|提示|说明|备注)[：:][^\n]*\n*/gim, '')  // 移除提示文本
-                    .trim();
-                console.log('✅ [总结提取] 清理开场白和说明文本');
-            }
+            // ✅ 第二步：智能分级清洗 (防止误删 "收到信件" 等剧情)
+            cleanSummary = cleanSummary
+                // 1. 移除独立的短客套话 (仅当它们单独占一行或在开头时)
+                // 匹配：开头 -> 好的/收到 -> 标点 -> 换行
+                .replace(/^(好的|收到|明白|了解|OK|Ok|ok)[，,。!！]*\s*(\n|$)/, '')
+
+                // 2. 移除带引导的客套话 (必须包含"总结"等关键词才敢删)
+                // 匹配：收到，以下是总结...
+                .replace(/^(好的|收到|明白|了解).*?(总结|分析|如下|内容|查看)[^：:\n]*[：:\n]/i, '')
+
+                // 3. 移除强特征的 AI 开场白 (仅保留剧情中极少使用的词)
+                .replace(/^[\s\S]*?(以下是|让我|我将|基于|根据|综上)[^：:\n]*[：:\n]/i, '')
+
+                // 4. 移除分析说明和提示文本
+                .replace(/^(注意|提示|说明|备注)[：:][^\n]*\n*/gim, '')
+
+                .trim();
+
+            console.log('✅ [总结提取] 已执行安全分级清洗');
 
             // ✅ 第三步：移除常见的结尾废话
             cleanSummary = cleanSummary
@@ -3721,10 +4210,17 @@ async function callIndependentAPI(prompt) {
     const authHeader = apiKey.startsWith('Bearer ') ? apiKey : ('Bearer ' + apiKey);
 
     // ==========================================
-    // 阶段 1: 尝试走 SillyTavern 后端代理 (解决 CORS)
+    // 阶段 1: 尝试走 SillyTavern 后端代理 (带 3s 超时)
     // ==========================================
     try {
-        console.log('📡 [通道1] 尝试后端代理...');
+        console.log('📡 [通道1] 尝试后端代理 (超时限制: 3s)...');
+
+        // ✅ 1. 设置超时控制器
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => {
+            controller.abort();
+            console.log('⏱️ [通道1] 3秒超时，中止请求...');
+        }, 3000); // 3秒超时
 
         // 获取 CSRF Token
         let csrfToken = '';
@@ -3761,8 +4257,12 @@ async function callIndependentAPI(prompt) {
                 'Content-Type': 'application/json',
                 'X-CSRF-Token': csrfToken
             },
-            body: JSON.stringify(proxyPayload)
+            body: JSON.stringify(proxyPayload),
+            signal: controller.signal // ✅ 2. 绑定中止信号
         });
+
+        // ✅ 3. 请求成功，清除超时定时器
+        clearTimeout(timeoutId);
 
         // 如果后端成功，直接解析返回
         if (proxyResponse.ok) {
@@ -3779,7 +4279,12 @@ async function callIndependentAPI(prompt) {
         console.warn(`⚠️ [后端代理失败] ${proxyResponse.status}: ${errText.substring(0, 200)}`);
 
     } catch (e) {
-        console.warn(`⚠️ [后端网络错误] ${e.message}`);
+        // ✅ 4. 捕获超时或网络错误
+        if (e.name === 'AbortError') {
+            console.warn('⚠️ [通道1] 后端代理响应超时 (>3s)，自动切换到浏览器直连');
+        } else {
+            console.warn(`⚠️ [通道1] 请求失败: ${e.message}`);
+        }
     }
 
     // ==========================================
@@ -4082,12 +4587,12 @@ function shtm() {
             await customAlert('主题与字体设置已保存', '成功'); 
         });
         
-        $('#tr').off('click').on('click', async function() { 
+        $('#tr').off('click').on('click', async function() {
             if (!await customConfirm('确定恢复默认主题？', '确认')) return;
-            UI = { c: '#9c4c4c', bc: '#ffffff', tc: '#ffffff', fs: 12 }; 
-            try { localStorage.removeItem(UK); } catch (e) {} 
+            UI = { c: '#888888', bc: '#ffffff', tc: '#ffffff', fs: 12 };
+            try { localStorage.removeItem(UK); } catch (e) {}
             m.save();
-            thm(); 
+            thm();
             // 恢复时也强制更新一下变量
             document.documentElement.style.setProperty('--g-fs', '12px');
             await customAlert('已恢复默认主题', '成功'); 
@@ -4097,6 +4602,7 @@ function shtm() {
 }
     
 function shapi() {
+    loadConfig(); // ✅ 强制刷新配置，确保读取到最新的 Provider 设置
     if (!API_CONFIG.summarySource) API_CONFIG.summarySource = 'table';
 
     const h = `
@@ -4809,31 +5315,19 @@ function shcf() {
             </div>
             
            <div style="background: rgba(40, 167, 69, 0.1); border: 1px solid rgba(40, 167, 69, 0.3); padding: 8px; border-radius: 4px; margin-bottom: 10px; font-size: 11px; color: #155724;">
-                <strong>🌟 推荐用法 (变量模式)：</strong><br>
-                在酒馆的【预设】、【世界书】或【角色卡】中随机一处插入变量调整发送的提示词、总结内容、表格的插入内容位置：<br>
-                • 实时填表插入变量(全部表单含总结)：<code style="background:rgba(255,255,255,0.5); color:#155724; padding:0 4px; border-radius:3px; font-weight:bold; user-select:text;">{{MEMORY}}</code> (跟随开关)<br>
+                <strong>🌟 变量模式：</strong><br>
+                与实时填表搭配使用,在酒馆的【预设】中随机一处插入变量调整填表提示词、总结内容、表格内容在上下文的位置：<br>
+                • 实时填表插入变量(全部表单含总结)：<code style="background:rgba(255,255,255,0.5); color:#155724; padding:0 4px; border-radius:3px; font-weight:bold; user-select:text;">{{MEMORY}}</code> (跟随实时填表开关)<br>
                 • 表格插入变量(不含总结表)：<code style="background:rgba(255,255,255,0.5); color:#155724; padding:0 4px; border-radius:3px; font-weight:bold; user-select:text;">{{MEMORY_TABLE}}</code> (强制发送表格内容)<br>
                 • 总结插入变量(不含其他表格)：<code style="background:rgba(255,255,255,0.5); color:#155724; padding:0 4px; border-radius:3px; font-weight:bold; user-select:text;">{{MEMORY_SUMMARY}}</code> (强制发生总结内容)<br>
                 • 填表规则插入变量：<code style="background:rgba(255,255,255,0.5); color:#155724; padding:0 4px; border-radius:3px; font-weight:bold; user-select:text;">{{MEMORY_PROMPT}}</code><br>
             </div>
 
             <div style="font-size: 11px; opacity: 0.8; margin-bottom: 4px;">👇 备用方案 (当未找到 {{MEMORY}} 变量时)：</div>
-            
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px;">
-                <select id="c-table-pos" style="width:100%; padding:4px; border-radius:4px; border:1px solid rgba(0,0,0,0.2);">
-                    <option value="system" ${C.tablePos === 'system' ? 'selected' : ''}>角色: 系统</option>
-                    <option value="user" ${C.tablePos === 'user' ? 'selected' : ''}>角色: 用户</option>
-                </select>
-                <select id="c-table-pos-type" style="width:100%; padding:4px; border-radius:4px; border:1px solid rgba(0,0,0,0.2);">
-                    <option value="system_end" ${C.tablePosType === 'system_end' ? 'selected' : ''}>位置: 相对</option>
-                    <option value="chat" ${C.tablePosType === 'chat' ? 'selected' : ''}>位置: 聊天中</option>
-                </select>
-            </div>
-            <div id="c-table-depth-container" style="margin-top: 8px; ${C.tablePosType === 'chat' ? '' : 'display:none;'}">
-                <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px;">
-                    <span style="opacity:0.7;">深度 (倒数第几条)</span>
-                    <input type="number" id="c-table-depth" value="${C.tableDepth}" min="0" style="width: 40px; text-align: center; border-radius: 4px; border: 1px solid rgba(0,0,0,0.2);">
-                </div>
+
+            <div style="background: rgba(0,0,0,0.03); padding: 10px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.1); font-size: 11px; color: #666; line-height: 1.6;">
+                <i class="fa-solid fa-circle-info" style="color: #17a2b8;"></i> <strong>默认策略：</strong><br>
+                表格内容将作为 <strong>系统 (System)</strong> 消息，自动插入到 <strong>聊天记录 (Chat History)</strong> 的最上方（紧挨在 [Start a new Chat] 之前）。
             </div>
         </div>
 
@@ -4908,7 +5402,7 @@ function shcf() {
 
         <div style="background: rgba(255,255,255,0.15); border-radius: 8px; padding: 10px; border: 1px solid rgba(255,255,255,0.2);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
-                <div style="font-weight: 600;">🏷️ 标签内容过滤</div>
+                <div style="font-weight: 600;">🏷️ 标签过滤</div>
                 <div style="display:flex; gap:10px; font-size:11px;">
                     <label style="cursor:pointer;"><input type="radio" name="c-filter-mode" value="blacklist" ${C.filterMode !== 'whitelist' ? 'checked' : ''}> 🚫 黑名单(屏蔽)</label>
                     <label style="cursor:pointer;"><input type="radio" name="c-filter-mode" value="whitelist" ${C.filterMode === 'whitelist' ? 'checked' : ''}> ✅ 白名单(只留)</label>
@@ -4918,16 +5412,9 @@ function shcf() {
             <input type="text" id="c-filter-tags" value="${esc(C.filterTags || '')}" placeholder="标签名..." style="width:100%; padding:5px; border:1px solid rgba(0,0,0,0.1); border-radius:4px; font-size:11px; font-family:monospace;">
             <div style="font-size:10px; color:#d63031; margin-top:4px;" id="filter-tip">
                 ${C.filterMode === 'whitelist' ?
-                '⚠️ 白名单模式：仅提取 <tag> 内的文字，丢弃其他所有内容（若未找到标签则保留原文）。' :
-                '⚠️ 黑名单模式：删除 <tag> 及其内部的所有文字。'}
+                '⚠️ 白名单模式：仅提取标签内的文字，丢弃其他所有内容（若未找到标签则保留原文）。' :
+                '⚠️ 黑名单模式：删除标签及其内部的所有文字。'}
             </div>
-        </div>
-
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px;">
-            <label style="display:flex; align-items:center; gap:4px;"><input type="checkbox" id="c-log" ${C.log ? 'checked' : ''}> F12 调试日志</label>
-            <label style="display:flex; align-items:center; gap:4px;"><input type="checkbox" id="c-pc" ${C.pc ? 'checked' : ''}> 角色独立存储</label>
-            <label style="display:flex; align-items:center; gap:4px;"><input type="checkbox" id="c-hide" ${C.hideTag ? 'checked' : ''}> 隐藏记忆标签</label>
-            <label style="display:flex; align-items:center; gap:4px;"><input type="checkbox" id="c-filter" ${C.filterHistory ? 'checked' : ''}> 过滤历史标签</label>
         </div>
 
         <div style="background: rgba(76, 175, 80, 0.1); border: 1px solid rgba(76, 175, 80, 0.3); border-radius: 6px; padding: 10px; margin-top: 10px;">
@@ -4966,11 +5453,6 @@ function shcf() {
     pop('⚙️ 配置', h, true);
     
     setTimeout(() => {
-        $('#c-table-pos-type').on('change', function() {
-            if ($(this).val() === 'chat') $('#c-table-depth-container').slideDown(200);
-            else $('#c-table-depth-container').slideUp(200);
-        });
-        
         $('#reset-range-btn').on('click', function() {
             $('#man-start').val(0);
             $('#man-end').val(totalCount);
@@ -5298,7 +5780,7 @@ function shcf() {
             C.uiFold = $('#c-uifold-on').is(':checked');
             C.uiFoldCount = parseInt($('#c-uifold-count').val());
             C.tableInj = $('#c-table-inj').is(':checked');
-            C.tablePos = $('#c-table-pos').val();
+            C.tablePos = 'system'; // ✨ 强制默认值：系统角色
             C.tablePosType = $('#c-table-pos-type').val();
             C.tableDepth = parseInt($('#c-table-depth').val()) || 0;
 
@@ -5314,10 +5796,13 @@ function shcf() {
             C.filterMode = $('input[name="c-filter-mode"]:checked').val();
 
             try { localStorage.setItem(AK, JSON.stringify(API_CONFIG)); } catch (e) {}
-            C.log = $('#c-log').is(':checked');
-            C.pc = $('#c-pc').is(':checked');
-            C.hideTag = $('#c-hide').is(':checked');
-            C.filterHistory = $('#c-filter').is(':checked');
+
+            // ✨✨✨ 强制开启基础功能，精简UI ✨✨✨
+            C.log = true;           // 默认开启日志
+            C.pc = true;            // 默认开启角色独立存储 (重要)
+            C.hideTag = true;       // 默认开启隐藏标签
+            C.filterHistory = true; // 默认开启历史过滤
+
             C.syncWorldInfo = $('#c-sync-wi').is(':checked');
 
             // ✨ 检测世界书同步从开启到关闭的状态变化，提示用户手动禁用世界书条目
@@ -5606,7 +6091,9 @@ function omsg(id) {
  * @param {boolean} isManual - 是否为手动触发（默认false）
  */
 async function autoRunBackfill(start, end, isManual = false) {
-    // 1. ✅ 强制从 SillyTavern.getContext() 获取数据
+    loadConfig(); // ✅ 1. 强制刷新配置，确保开关状态最新
+
+    // 2. ✅ 强制从 SillyTavern.getContext() 获取数据
     const ctx = window.SillyTavern.getContext(); 
     if (!ctx || !ctx.chat) return;
 
@@ -5801,7 +6288,7 @@ async function autoRunBackfill(start, end, isManual = false) {
             // 移除常见的开场白模式
             aiOutput = aiOutput
                 .replace(/^[\s\S]*?(?=<Memory>|insertRow|updateRow)/i, '')  // 移除开头到第一个指令之前的内容
-                .replace(/^(好的|明白|收到|了解|理解|根据|分析|总结|以下是|这是|正在|开始)[^<\n]*\n*/gim, '')  // 移除礼貌用语
+                .replace(/^(好的|明白|收到|了解|理解|根据|分析|总结|以下是)[^<\n]*\n*/gim, '')  // 移除礼貌用语
                 .replace(/^.*?(根据|基于|查看|阅读|分析).*?([，,：:]|之后)[^\n]*\n*/gim, '')  // 移除分析说明
                 .trim();
 
@@ -5829,6 +6316,16 @@ async function autoRunBackfill(start, end, isManual = false) {
                      API_CONFIG.lastBackfillIndex = end;
                      try { localStorage.setItem(AK, JSON.stringify(API_CONFIG)); } catch (e) {}
                      if (typeof toastr !== 'undefined') toastr.success(`自动填表已完成`, '记忆表格', { timeOut: 1000, preventDuplicates: true });
+
+                     // ✨✨✨【核心修复】检测并刷新当前UI ✨✨✨
+                     if ($('#g-pop').length > 0) {
+                         const activeTab = $('.g-t.act').data('i');
+                         // 刷新当前显示的表格
+                         if (activeTab !== undefined) refreshTable(activeTab);
+                         // 同时也刷新一下各标签页的 (数字) 计数
+                         m.s.forEach((_, i) => updateTabCount(i));
+                         console.log('🔄 [自动填表] UI 已实时刷新');
+                     }
                  }
             } else {
                  setTimeout(() => {
@@ -5836,13 +6333,8 @@ async function autoRunBackfill(start, end, isManual = false) {
                          // ✅ 传递 end 给弹窗，让用户确认后再更新进度
                          // 同时传递重新生成所需的参数
                          const regenParams = { start, end, isManual };
+                         // ✅ 2. 仅显示编辑窗口，删除多余的 customAlert
                          showBackfillEditPopup(finalOutput, end, regenParams);
-
-                         // 🔴 只有在【自动模式】下，才弹出这个提示
-                         // 手动模式下，用户已经点了按钮，直接看编辑框即可，不需要废话
-                         if (!isManual) {
-                            customAlert(`⚡ 自动批量填表已触发！\n请确认并写入。`, '自动任务');
-                         }
                      }
                  }, 500);
             }
@@ -5855,6 +6347,9 @@ async function autoRunBackfill(start, end, isManual = false) {
     // 1. 聊天状态变更监听 (修复删楼后的快照链断裂)
     // ============================================================
     function ochat() {
+        // ✅ 清空探针数据，防止跨会话泄漏
+        window.Gaigai.lastRequestData = null;
+
         lastInternalSaveTime = 0;
         m.load();
 
@@ -6615,7 +7110,7 @@ function showBackfillEditPopup(content, newIndex = null, regenParams = null) {
                             // 移除常见的开场白模式
                             aiOutput = aiOutput
                                 .replace(/^[\s\S]*?(?=<Memory>|insertRow|updateRow)/i, '')
-                                .replace(/^(好的|明白|收到|了解|理解|根据|分析|总结|以下是|这是|正在|开始)[^<\n]*\n*/gim, '')
+                                .replace(/^(好的|明白|收到|了解|理解|根据|分析|总结|以下是)[^<\n]*\n*/gim, '')
                                 .replace(/^.*?(根据|基于|查看|阅读|分析).*?([，,：:]|之后)[^\n]*\n*/gim, '')
                                 .trim();
 
@@ -6942,7 +7437,7 @@ window.Gaigai.showLastRequest = function() {
                 return;
             }
 
-            let UI = { c: '#9c4c4c' }; 
+            let UI = { c: '#888888' }; 
 
             try {
                 const savedUI = localStorage.getItem('gg_ui');
