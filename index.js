@@ -69,7 +69,7 @@ let API_CONFIG = {
         model: 'gemini-2.5-pro',
         temperature: 0.7,
         maxTokens: 0, // 👈 修改这里！改成了 0 (表示不限制/最大)
-        summarySource: 'table',
+        summarySource: 'chat', // ✅ 默认改为聊天历史，符合大多数用户直觉
         lastSummaryIndex: 0,
         lastBackfillIndex: 0
     };
@@ -3976,7 +3976,8 @@ ${currentTableData ? currentTableData : "（表格为空）"}
             if (isSilent) {
                 m.sm.save(cleanSummary);
                 await syncToWorldInfo(cleanSummary); // 同步到世界书
-                if (isTableMode) {
+                // ✅ 只有明确是 table 模式，且不是自动触发的聊天总结，才标记表格
+                if (isTableMode && currentMode === 'table') {
                     tables.forEach(table => {
                         const ti = m.all().indexOf(table);
                         if (ti !== -1) {
@@ -4108,8 +4109,9 @@ function showSummaryPreview(summaryText, sourceTables, isTableMode, newIndex = n
             // 2. 同步到世界书（如果启用）
             await syncToWorldInfo(editedSummary);
 
-            // 3. 标记绿色行 (仅在表格模式下)
-            if (isTableMode) {
+            // 3. 标记绿色行 (仅在明确的表格模式下)
+            // ✅ 只有明确是 table 模式，才标记表格
+            if (isTableMode && currentMode === 'table') {
                 sourceTables.forEach(table => {
                     const ti = m.all().indexOf(table);
                     if (ti !== -1) {
@@ -4603,7 +4605,7 @@ function shtm() {
     
 function shapi() {
     loadConfig(); // ✅ 强制刷新配置，确保读取到最新的 Provider 设置
-    if (!API_CONFIG.summarySource) API_CONFIG.summarySource = 'table';
+    if (!API_CONFIG.summarySource) API_CONFIG.summarySource = 'chat';
 
     const h = `
     <div class="g-p">
