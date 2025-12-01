@@ -12,10 +12,10 @@
     }
     window.GaigaiLoaded = true;
 
-    console.log('🚀 记忆表格 v1.1.16 启动');
+    console.log('🚀 记忆表格 v1.1.17 启动');
 
     // ==================== 全局常量定义 ====================
-    const V = 'v1.1.16';
+    const V = 'v1.1.17';
     const SK = 'gg_data';              // 数据存储键
     const UK = 'gg_ui';                // UI配置存储键
     const PK = 'gg_prompts';           // 提示词存储键
@@ -1109,7 +1109,16 @@ class SM {
         load() {
             const id = this.gid();
             if (!id) return;
-            if (this.id !== id) { this.id = id; this.s = []; T.forEach(tb => this.s.push(new S(tb.n, tb.c))); this.sm = new SM(this); lastInternalSaveTime = 0; }
+            if (this.id !== id) {
+                // 🔄 检测到会话/角色切换，重置所有状态
+                this.id = id;
+                this.s = [];
+                T.forEach(tb => this.s.push(new S(tb.n, tb.c)));
+                this.sm = new SM(this);
+                lastInternalSaveTime = 0;
+                summarizedRows = {}; // ✅ 核心修复：清空"已总结行"状态，防止跨会话串味
+                console.log(`🔄 [会话切换] ID: ${id}，已重置所有状态 (包括已总结行)`);
+            }
             let cloudData = null; let localData = null;
             if (C.cloudSync) { try { const ctx = this.ctx(); if (ctx && ctx.chatMetadata && ctx.chatMetadata.gaigai) cloudData = ctx.chatMetadata.gaigai; } catch (e) {} }
 
@@ -1727,21 +1736,18 @@ async function resetColWidths() {
             $(document).off('keydown.viewSettings');
         });
     }
-    
-    // 已总结行管理
+
+    // 已总结行管理（已废弃全局保存，改为通过 m.save() 绑定角色ID）
     function saveSummarizedRows() {
-        try {
-            localStorage.setItem(SMK, JSON.stringify(summarizedRows));
-        } catch (e) {}
+        // ❌ 已废弃：不再保存到全局 LocalStorage
+        // summarizedRows 现在通过 m.save() 中的 summarized 字段保存，绑定到角色ID
+        // 这样每个角色/会话都有独立的"已总结行"状态，不会串味
     }
-    
+
     function loadSummarizedRows() {
-        try {
-            const saved = localStorage.getItem(SMK);
-            if (saved) {
-                summarizedRows = JSON.parse(saved);
-            }
-        } catch (e) {}
+        // ❌ 已废弃：不再从全局 LocalStorage 加载
+        // summarizedRows 现在通过 m.load() 从角色专属存档中恢复
+        // 切换会话时会自动重置为 {}，然后加载该会话的专属状态
     }
     
     function markAsSummarized(tableIndex, rowIndex) {
@@ -7033,9 +7039,10 @@ async function ini() {
             localStorage.setItem(PK, JSON.stringify(PROMPTS));
         }
     } catch (e) {}
-    
+
+
     loadColWidths();
-    loadSummarizedRows();
+    // loadSummarizedRows(); // ❌ 已废弃：不再从全局加载，改为通过 m.load() 从角色专属存档加载
     m.load();
     thm();
 
