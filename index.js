@@ -5084,7 +5084,7 @@ async function callIndependentAPI(prompt) {
             model: model,
             messages: cleanMessages,
             temperature: temperature,
-            stream: false
+            stream: true  // ✅ [伪流式改造] 启用流式响应，解决 Zeabur 60秒超时问题
         };
 
         // Gemini 特殊格式处理
@@ -5099,6 +5099,8 @@ async function callIndependentAPI(prompt) {
                     maxOutputTokens: maxTokens
                 }
             };
+            // Gemini 不支持标准流式，强制改回非流式
+            delete requestBody.stream;
         } else {
             // 其他 Provider 添加 max_tokens
             requestBody.max_tokens = maxTokens;
@@ -5137,15 +5139,109 @@ async function callIndependentAPI(prompt) {
             throw new Error(`HTTP ${directResponse.status}: ${errText.substring(0, 500)}`);
         }
 
-        const data = await directResponse.json();
-        const result = parseApiResponse(data);
+        // ✅✅✅ [伪流式响应处理] 实现健壮的 SSE 流式解析 ✅✅✅
+        let fullText = '';  // 累积完整文本
 
-        if (result.success) {
-            console.log('✅ [浏览器直连] 成功！');
-            return result;
+        // 判断是否为流式响应（检测 Content-Type）
+        const contentType = directResponse.headers.get('content-type') || '';
+        const isStreamResponse = contentType.includes('text/event-stream') || requestBody.stream === true;
+
+        if (isStreamResponse && directResponse.body) {
+            console.log('🌊 [流式模式] 开始接收 SSE 流式响应...');
+
+            try {
+                const reader = directResponse.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = '';  // 缓冲区，处理分片数据
+
+                while (true) {
+                    const { done, value } = await reader.read();
+
+                    if (done) {
+                        console.log('✅ [流式模式] 接收完成');
+                        break;
+                    }
+
+                    // 解码当前 chunk 并追加到 buffer
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // 按行分割（SSE 格式是换行符分隔）
+                    const lines = buffer.split('\n');
+
+                    // 保留最后一个可能不完整的行
+                    buffer = lines.pop() || '';
+
+                    // 处理每一行
+                    for (const line of lines) {
+                        const trimmed = line.trim();
+
+                        // 跳过空行和注释
+                        if (!trimmed || trimmed.startsWith(':')) continue;
+
+                        // 跳过 [DONE] 信号
+                        if (trimmed === 'data: [DONE]') continue;
+
+                        // 解析 SSE 格式: "data: {...}"
+                        if (trimmed.startsWith('data: ')) {
+                            const jsonStr = trimmed.substring(6);  // 去掉 "data: " 前缀
+
+                            try {
+                                const chunk = JSON.parse(jsonStr);
+
+                                // 提取内容（OpenAI 标准格式）
+                                const delta = chunk.choices?.[0]?.delta?.content;
+                                if (delta) {
+                                    fullText += delta;
+                                }
+
+                                // 兼容其他可能的格式
+                                if (!delta && chunk.choices?.[0]?.text) {
+                                    fullText += chunk.choices[0].text;
+                                }
+
+                            } catch (parseErr) {
+                                console.warn('⚠️ [流式解析] JSON 解析失败，跳过此行:', jsonStr.substring(0, 100));
+                            }
+                        }
+                    }
+                }
+
+                // 处理剩余 buffer 中的数据
+                if (buffer.trim()) {
+                    console.log('📝 [流式模式] 处理剩余 buffer:', buffer.substring(0, 100));
+                }
+
+                console.log(`✅ [流式模式] 累积文本长度: ${fullText.length} 字符`);
+
+            } catch (streamErr) {
+                console.error('❌ [流式解析失败]', streamErr);
+                throw new Error(`流式读取失败: ${streamErr.message}`);
+            }
+
+        } else {
+            // 降级：非流式响应，使用传统方式
+            console.log('📄 [非流式模式] 使用传统 JSON 解析...');
+            const data = await directResponse.json();
+            const result = parseApiResponse(data);
+
+            if (result.success) {
+                console.log('✅ [浏览器直连] 成功（非流式）！');
+                return result;
+            }
+
+            throw new Error('直连返回数据无法解析');
         }
 
-        throw new Error('直连返回数据无法解析');
+        // 流式模式：返回累积的完整文本
+        if (fullText && fullText.trim()) {
+            console.log('✅ [浏览器直连] 成功（流式）！');
+            return {
+                success: true,
+                summary: fullText.trim()
+            };
+        }
+
+        throw new Error('流式响应未返回有效内容');
 
     } catch (e) {
         console.error('❌ [浏览器直连失败]', e);
