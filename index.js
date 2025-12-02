@@ -1,5 +1,5 @@
 // ========================================================================
-// 记忆表格 v1.2.0
+// 记忆表格 v1.2.1
 // SillyTavern 记忆管理系统 - 提供表格化记忆、自动总结、批量填表等功能
 // ========================================================================
 (function() {
@@ -12,10 +12,10 @@
     }
     window.GaigaiLoaded = true;
 
-    console.log('🚀 记忆表格 v1.2.0 启动');
+    console.log('🚀 记忆表格 v1.2.1 启动');
 
     // ==================== 全局常量定义 ====================
-    const V = 'v1.2.0';
+    const V = 'v1.2.1';
     const SK = 'gg_data';              // 数据存储键
     const UK = 'gg_ui';                // UI配置存储键
     const PK = 'gg_prompts';           // 提示词存储键
@@ -6538,31 +6538,40 @@ async function shcf() {
         });
 
         // ✨✨✨ 新增：强制读取服务端数据（解决多端同步问题）
-        // ✨✨✨ [修复版] 强制读取服务端数据（解决多端同步问题）
+        // ✨✨✨ [修复版] 直接从服务器 API 获取最新 settings.json
         $('#force-cloud-load').off('click').on('click', async function() {
             const btn = $(this);
             const originalText = btn.text();
-            btn.text('正在从 extension_settings 同步...').prop('disabled', true);
+            btn.text('正在从服务器同步...').prop('disabled', true);
 
             try {
-                console.log('🔄 [强制同步] 开始从 extension_settings 拉取最新配置和数据...');
+                console.log('🔄 [强制同步] 开始从服务器 API 获取最新配置...');
 
-                // ✅ 直接从 window.extension_settings 读取
-                if (!window.extension_settings || !window.extension_settings.st_memory_table) {
-                    await customAlert('⚠️ extension_settings 中暂无配置数据\n\n请先在电脑端点击【保存配置】。', '无配置');
-                    btn.text(originalText).prop('disabled', false);
-                    return;
+                // ✅ 1. 调用 SillyTavern API 获取最新的 settings.json
+                const response = await fetch('/api/settings/get', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: '{}'
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API 请求失败: ${response.status}`);
                 }
 
-                const serverConfig = window.extension_settings.st_memory_table;
+                const data = await response.json();
+
+                // ✅ 2. 提取插件配置数据
+                const serverConfig = data?.extension_settings?.st_memory_table;
 
                 if (!serverConfig || Object.keys(serverConfig).length === 0) {
-                    await customAlert('⚠️ 配置数据为空\n\n请先在电脑端点击【保存配置】。', '无配置');
+                    await customAlert('⚠️ 服务器上暂无此插件的配置数据\n\n请先在电脑端点击【保存配置】。', '无配置');
                     btn.text(originalText).prop('disabled', false);
                     return;
                 }
 
-                console.log('✅ [强制同步] 成功获取 extension_settings 数据');
+                console.log('✅ [强制同步] 成功从服务器获取最新配置');
 
                 // ✅ 3. 暴力覆盖本地变量
                 if (serverConfig.config) Object.assign(C, serverConfig.config);
