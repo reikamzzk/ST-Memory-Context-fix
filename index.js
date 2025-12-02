@@ -4356,18 +4356,35 @@ async function callAIForSummary(forceStart = null, forceEnd = null, forcedMode =
 
         if (contextText) messages.push({ role: 'system', content: contextText });
 
-        // ✨✨✨ [第二步] 后推送记忆表格 (在了解背景后再看具体剧情)
-        const existingSummary = m.sm.has() ? m.sm.load() : "（暂无历史总结）";
+        // ✨✨✨ [化整为零策略] 拆分历史总结为多条独立 System 消息 ✨✨✨
+        // 第一步：获取总结数组并截取最近 15 条
+        if (m.sm.has()) {
+            const summaryArray = m.sm.loadArray();
+            const recentSummaries = summaryArray.slice(-15); // 取最近 15 条
+
+            // 第二步：循环插入每条总结作为独立的 system 消息
+            recentSummaries.forEach((item) => {
+                messages.push({
+                    role: 'system',
+                    content: `【前情提要 - ${item.type || '历史'}】\n${item.content}`
+                });
+            });
+            console.log(`✅ [消息拆分] 已插入 ${recentSummaries.length} 条独立历史总结`);
+        } else {
+            // 如果没有历史总结，插入一条说明
+            messages.push({
+                role: 'system',
+                content: '【前情提要】\n（暂无历史总结）'
+            });
+        }
+
+        // 第三步：插入当前表格状态（独立消息）
         const currentTableData = m.getTableText();
+        messages.push({
+            role: 'system',
+            content: `【📊 当前表格状态 (已记录的剧情)】\n${currentTableData || "（表格为空）"}`
+        });
 
-        const memoryContext = `
-【📚 前情提要(已总结的剧情) 】
-${existingSummary}
-
-【📊 当前表格状态 (已记录的剧情)】
-${currentTableData ? currentTableData : "（表格为空）"}
-`;
-        messages.push({ role: 'system', content: memoryContext });
 
         // (Msg 3...N) 聊天记录
         let validMsgCount = 0;
@@ -4428,10 +4445,7 @@ ${currentTableData ? currentTableData : "（表格为空）"}
         // 组合完整内容
         const finalContent = tableText + '\n' + statusStr;
 
-        // 获取前情提要
-        const existingSummary = m.sm.has() ? m.sm.load() : "（暂无历史总结）";
-
-        // ✨✨✨ [多重 System 架构] ✨✨✨
+        // ✨✨✨ [多重 System 架构 - 化整为零策略] ✨✨✨
         // System 0: NSFW Prompt（完全由用户配置决定）
         messages.push({
             role: 'system',
@@ -4439,16 +4453,31 @@ ${currentTableData ? currentTableData : "（表格为空）"}
         });
         console.log('✅ [System 0] NSFW Prompt 已写入');
 
-        // System 1: 前情提要 + 表格数据 (合并放入 System，避免 User 过长)
-        let sys1Content = '';
-        if (existingSummary) sys1Content += '【前情提要 (历史总结)】\n' + existingSummary + '\n\n';
-        sys1Content += '【待总结的表格数据】\n\n' + finalContent;
+        // System 1~N: 拆分历史总结为多条独立 System 消息
+        if (m.sm.has()) {
+            const summaryArray = m.sm.loadArray();
+            const recentSummaries = summaryArray.slice(-15); // 取最近 15 条
 
+            recentSummaries.forEach((item) => {
+                messages.push({
+                    role: 'system',
+                    content: `【前情提要 - ${item.type || '历史'}】\n${item.content}`
+                });
+            });
+            console.log(`✅ [消息拆分] 已插入 ${recentSummaries.length} 条独立历史总结`);
+        } else {
+            messages.push({
+                role: 'system',
+                content: '【前情提要】\n（暂无历史总结）'
+            });
+        }
+
+        // System N+1: 待总结的表格数据
         messages.push({
             role: 'system',
-            content: sys1Content
+            content: '【待总结的表格数据】\n\n' + finalContent
         });
-        console.log('✅ [System 1] 前情提要 + 表格数据已写入');
+        console.log('✅ [System] 表格数据已写入');
 
         // User: 总结指令（精简，只包含任务要求）
         const summaryInstruction = `${targetPrompt}
@@ -7344,7 +7373,6 @@ async function autoRunBackfill(start, end, isManual = false) {
     }
 
     // 4. 📋 Instruction-Last：将所有规则和任务放在最后
-    const existingSummary = m.sm.has() ? m.sm.load() : "（暂无历史总结）";
 
     // ✨✨✨ 修复：手动构建包含状态栏的完整表格数据 ✨✨✨
     const tableTextRaw = m.getTableText();
@@ -7401,18 +7429,41 @@ async function autoRunBackfill(start, end, isManual = false) {
     messages[0].content = (PROMPTS.nsfwPrompt || NSFW_UNLOCK) + '\n\n' + contextBlock;
     console.log('✅ [Context注入] 角色信息和世界观已写入 System 0');
 
-    // ✨✨✨ [重构] Step 2.5: 在聊天历史前插入 System 1 - 存储前情提要 + 表格数据 ✨✨✨
-    // 将前情提要和表格数据作为独立的 System 消息，避免 User 消息过长
-    // 注意：这里使用 splice 在 index=1 的位置插入，确保顺序为 System 0 -> System 1 -> 聊天历史
-    let sys1Content = '';
-    if (existingSummary) sys1Content += '【前情提要 (历史总结)】\n' + existingSummary + '\n\n';
-    sys1Content += '【当前表格状态】\n' + currentTableData;
+    // ✨✨✨ [化整为零策略] 拆分历史总结为多条独立 System 消息 ✨✨✨
+    // Step 2.5: 在聊天历史前插入多条 System - 存储前情提要 + 表格数据
+    // 注意：这里使用 splice 在 index=1 的位置插入，确保顺序为 System 0 -> System 1~N -> 聊天历史
+    let insertIndex = 1; // 从索引 1 开始插入（在 System 0 之后）
 
-    messages.splice(1, 0, {
+    // 第一步：拆分插入历史总结（每条作为独立 System 消息）
+    if (m.sm.has()) {
+        const summaryArray = m.sm.loadArray();
+        const recentSummaries = summaryArray.slice(-15); // 取最近 15 条
+
+        recentSummaries.forEach((item) => {
+            messages.splice(insertIndex, 0, {
+                role: 'system',
+                content: `【前情提要 - ${item.type || '历史'}】\n${item.content}`
+            });
+            insertIndex++; // 每次插入后，下一个插入位置后移
+        });
+        console.log(`✅ [消息拆分] 已插入 ${recentSummaries.length} 条独立历史总结`);
+    } else {
+        // 如果没有历史总结，插入一条说明
+        messages.splice(insertIndex, 0, {
+            role: 'system',
+            content: '【前情提要】\n（暂无历史总结）'
+        });
+        insertIndex++;
+        console.log('✅ [消息拆分] 无历史总结，已插入空提示');
+    }
+
+    // 第二步：插入当前表格状态（独立消息）
+    messages.splice(insertIndex, 0, {
         role: 'system',
-        content: sys1Content
+        content: `【当前表格状态】\n${currentTableData}`
     });
-    console.log('✅ [数据注入] 前情提要和表格数据已写入 System 1（位于聊天历史之前），避免 User 消息过长');
+    insertIndex++;
+    console.log('✅ [数据注入] 表格数据已作为独立 System 消息插入（位于聊天历史之前），避免 User 消息过长');
 
     // ✨✨✨ [重构] Step 3: 构建 User 指令 - 只包含任务要求 ✨✨✨
     // 使用批量填表专用提示词
@@ -8267,7 +8318,6 @@ function showBackfillEditPopup(content, newIndex = null, regenParams = null) {
                     });
 
                     // 📋 Instruction-Last：将所有规则放在最后
-                    const existingSummary = m.sm.has() ? m.sm.load() : "（暂无历史总结）";
 
                     // ✨✨✨ 修复：手动构建包含状态栏的完整表格数据 ✨✨✨
                     const tableTextRaw = m.getTableText();
@@ -8290,7 +8340,49 @@ function showBackfillEditPopup(content, newIndex = null, regenParams = null) {
                         if (char.description) contextInfo += `[人物简介]\n${char.description}\n`;
                     }
 
-                    const finalInstruction = `${existingSummary ? '前情提要:\n' + existingSummary + '\n\n' : ''}${currentTableData ? '当前表格状态:\n' + currentTableData + '\n\n' : ''}${contextInfo ? '角色信息:\n' + contextInfo + '\n\n' : ''}${rulesContent}
+                    // ✨✨✨ [化整为零策略] 插入历史总结为多条独立 System 消息 ✨✨✨
+                    // 在已有的 System 0 (NSFW Prompt) 之后，插入历史总结和表格数据
+                    let insertIndex = 1; // 从索引 1 开始插入（在 System 0 之后）
+
+                    // 第一步：拆分插入历史总结（每条作为独立 System 消息）
+                    if (m.sm.has()) {
+                        const summaryArray = m.sm.loadArray();
+                        const recentSummaries = summaryArray.slice(-15); // 取最近 15 条
+
+                        recentSummaries.forEach((item) => {
+                            messages.splice(insertIndex, 0, {
+                                role: 'system',
+                                content: `【前情提要 - ${item.type || '历史'}】\n${item.content}`
+                            });
+                            insertIndex++;
+                        });
+                        console.log(`✅ [重新生成-消息拆分] 已插入 ${recentSummaries.length} 条独立历史总结`);
+                    } else {
+                        messages.splice(insertIndex, 0, {
+                            role: 'system',
+                            content: '【前情提要】\n（暂无历史总结）'
+                        });
+                        insertIndex++;
+                    }
+
+                    // 第二步：插入当前表格状态（独立消息）
+                    messages.splice(insertIndex, 0, {
+                        role: 'system',
+                        content: `【当前表格状态】\n${currentTableData}`
+                    });
+                    insertIndex++;
+
+                    // 第三步：插入角色信息（如果有）
+                    if (contextInfo) {
+                        messages.splice(insertIndex, 0, {
+                            role: 'system',
+                            content: `【角色信息】\n${contextInfo}`
+                        });
+                        insertIndex++;
+                    }
+
+                    // 构建 User 指令（只包含规则，不包含数据）
+                    const finalInstruction = `${rulesContent}
 
 ⚡ 立即开始执行：请从头到尾分析上述所有剧情，按照规则更新表格，将结果输出在 <Memory> 标签中。`;
 
