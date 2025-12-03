@@ -5092,7 +5092,10 @@ async function callIndependentAPI(prompt) {
             model: model,
             messages: cleanMessages,
             temperature: temperature,
-            stream: true  // ✅ [伪流式改造] 启用流式响应，解决 Zeabur 60秒超时问题
+            stream: true,  // ✅ [伪流式改造] 启用流式响应，解决 Zeabur 60秒超时问题
+
+            // ✅✅✅ 清空停止符，防止遇到人名就截断
+            stop: []
         };
 
         // Gemini 特殊格式处理
@@ -5214,9 +5217,43 @@ async function callIndependentAPI(prompt) {
                     }
                 }
 
-                // 处理剩余 buffer 中的数据
+                // 处理剩余 buffer 中的数据（关键修复：解析并追加到 fullText）
                 if (buffer.trim()) {
                     console.log('📝 [流式模式] 处理剩余 buffer:', buffer.substring(0, 100));
+
+                    try {
+                        const trimmed = buffer.trim();
+
+                        // 跳过空行、注释和 [DONE] 信号
+                        if (trimmed && !trimmed.startsWith(':') && trimmed !== 'data: [DONE]') {
+                            // 解析 SSE 格式: "data: {...}"
+                            if (trimmed.startsWith('data: ')) {
+                                const jsonStr = trimmed.substring(6);  // 去掉 "data: " 前缀
+
+                                try {
+                                    const chunk = JSON.parse(jsonStr);
+
+                                    // 提取内容（OpenAI 标准格式）
+                                    const delta = chunk.choices?.[0]?.delta?.content;
+                                    if (delta) {
+                                        fullText += delta;
+                                        console.log('✅ [流式模式] 从剩余 buffer 中提取到内容，长度:', delta.length);
+                                    }
+
+                                    // 兼容其他可能的格式
+                                    if (!delta && chunk.choices?.[0]?.text) {
+                                        fullText += chunk.choices[0].text;
+                                        console.log('✅ [流式模式] 从剩余 buffer 中提取到 text，长度:', chunk.choices[0].text.length);
+                                    }
+                                } catch (parseErr) {
+                                    console.warn('⚠️ [流式解析] 剩余 buffer JSON 解析失败:', jsonStr.substring(0, 100), parseErr);
+                                }
+                            }
+                        }
+                    } catch (bufferErr) {
+                        console.error('❌ [流式解析] 处理剩余 buffer 时出错:', bufferErr);
+                        // 不抛出错误，避免影响已经成功接收的内容
+                    }
                 }
 
                 console.log(`✅ [流式模式] 累积文本长度: ${fullText.length} 字符`);
@@ -5382,7 +5419,11 @@ async function callTavernAPI(prompt) {
                     // ✅ 强制指定最大输出长度 (8192 token 足够写出极长的总结)
                     // 如果不加，它会默认只输出 200-300 字，受限于酒馆主界面的短回复设置
                     max_tokens: 8192,
-                    length: 8192
+                    length: 8192,
+
+                    // ✅✅✅ 清空停止符，防止遇到人名就截断
+                    stop: [],
+                    stop_sequence: []
                 });
                 console.log('✅ [直连] 调用成功');
             } catch (err) {
