@@ -1,0 +1,7 @@
+.DS_Store
+Thumbs.db
+config.json
+settings.json
+user_data/
+*.log
+*.tmp
