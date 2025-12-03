@@ -12,10 +12,10 @@
     }
     window.GaigaiLoaded = true;
 
-    console.log('🚀 记忆表格 v1.2.3 启动');
+    console.log('🚀 记忆表格 v1.2.4 启动');
 
     // ==================== 全局常量定义 ====================
-    const V = 'v1.2.3';
+    const V = 'v1.2.4';
     const SK = 'gg_data';              // 数据存储键
     const UK = 'gg_ui';                // UI配置存储键
     const PK = 'gg_prompts';           // 提示词存储键
@@ -1485,6 +1485,20 @@ class SM {
                 }
 
                 lastInternalSaveTime = finalData.ts;
+            } else {
+                // ✅✅✅ [指针污染修复] 新会话无存档时，重置 API 进度指针，防止跨会话污染
+                API_CONFIG.lastSummaryIndex = 0;
+                API_CONFIG.lastBackfillIndex = 0;
+                localStorage.setItem(AK, JSON.stringify(API_CONFIG));
+
+                // ☁️ 同步到云端，确保跨设备一致性
+                if (typeof saveAllSettingsToCloud === 'function') {
+                    saveAllSettingsToCloud().catch(err => {
+                        console.warn('⚠️ [指针重置] 云端同步失败:', err);
+                    });
+                }
+
+                console.log(`🆕 [新会话] ID: ${id}，已重置 API 进度指针 (lastSummaryIndex=0, lastBackfillIndex=0)`);
             }
         }
             
