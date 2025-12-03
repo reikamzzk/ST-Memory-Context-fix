@@ -5194,6 +5194,7 @@ async function callIndependentAPI(prompt) {
                 const reader = directResponse.body.getReader();
                 const decoder = new TextDecoder('utf-8');
                 let buffer = '';  // 缓冲区，处理分片数据
+                let isTruncated = false;  // 标记是否因长度限制被截断
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -5216,18 +5217,41 @@ async function callIndependentAPI(prompt) {
                     for (const line of lines) {
                         const trimmed = line.trim();
 
-                        // 跳过空行和注释
+                        // 跳过空行和注释（但要确保不会误杀有效数据）
                         if (!trimmed || trimmed.startsWith(':')) continue;
 
-                        // 跳过 [DONE] 信号
-                        if (trimmed === 'data: [DONE]') continue;
+                        // 跳过 [DONE] 信号（支持多种格式）
+                        if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') continue;
 
-                        // 解析 SSE 格式: "data: {...}"
-                        if (trimmed.startsWith('data: ')) {
-                            const jsonStr = trimmed.substring(6);  // 去掉 "data: " 前缀
+                        // ✅ 改进 1: 使用正则表达式匹配 SSE 前缀，支持 "data: " 或 "data:" 格式
+                        const sseMatch = trimmed.match(/^data:\s*/);
+                        if (sseMatch) {
+                            const jsonStr = trimmed.substring(sseMatch[0].length);  // 去掉 "data:" 前缀（含可选空格）
+
+                            // 跳过空 data 或 [DONE]
+                            if (!jsonStr || jsonStr === '[DONE]') continue;
 
                             try {
                                 const chunk = JSON.parse(jsonStr);
+
+                                // ✅ 改进 3: 检测 finish_reason，判断是否因长度限制被截断
+                                const finishReason = chunk.choices?.[0]?.finish_reason;
+                                if (finishReason) {
+                                    if (finishReason === 'length') {
+                                        isTruncated = true;
+                                        console.warn('⚠️ [流式模式] 检测到输出因 Max Tokens 限制被截断 (finish_reason: length)');
+                                    } else {
+                                        console.log(`✅ [流式模式] 完成原因: ${finishReason}`);
+                                    }
+                                }
+
+                                // ✅ 改进 4: DeepSeek 兼容 - 提取 reasoning_content（如果存在）
+                                const reasoningContent = chunk.choices?.[0]?.delta?.reasoning_content;
+                                if (reasoningContent) {
+                                    console.log('🧠 [DeepSeek] 检测到 reasoning_content，长度:', reasoningContent.length);
+                                    // 可选：将推理内容包裹在特殊标记中
+                                    // fullText += `<think>${reasoningContent}</think>`;
+                                }
 
                                 // 提取内容（OpenAI 标准格式）
                                 const delta = chunk.choices?.[0]?.delta?.content;
@@ -5241,8 +5265,18 @@ async function callIndependentAPI(prompt) {
                                 }
 
                             } catch (parseErr) {
-                                console.warn('⚠️ [流式解析] JSON 解析失败，跳过此行:', jsonStr.substring(0, 100));
+                                // ✅ 改进 2: 更详细的错误日志，帮助调试
+                                console.warn('⚠️ [流式解析] JSON 解析失败，原因:', parseErr.message);
+                                console.warn('   原始内容 (前100字符):', jsonStr.substring(0, 100));
+                                console.warn('   可能原因: JSON 格式错误或被分片截断');
+
+                                // 如果 JSON 解析失败，可能是被截断的，保留到 buffer 中等待下次拼接
+                                // 但这可能导致重复，所以仅在特定情况下使用
+                                // buffer = trimmed + '\n' + buffer;  // 谨慎使用
                             }
+                        } else if (trimmed && !trimmed.startsWith(':')) {
+                            // ✅ 改进 5: 记录无法识别的行（可能是格式错误或新协议）
+                            console.warn('⚠️ [流式解析] 无法识别的行格式 (前50字符):', trimmed.substring(0, 50));
                         }
                     }
                 }
@@ -5255,28 +5289,45 @@ async function callIndependentAPI(prompt) {
                         const trimmed = buffer.trim();
 
                         // 跳过空行、注释和 [DONE] 信号
-                        if (trimmed && !trimmed.startsWith(':') && trimmed !== 'data: [DONE]') {
-                            // 解析 SSE 格式: "data: {...}"
-                            if (trimmed.startsWith('data: ')) {
-                                const jsonStr = trimmed.substring(6);  // 去掉 "data: " 前缀
+                        if (trimmed && !trimmed.startsWith(':') && trimmed !== 'data: [DONE]' && trimmed !== 'data:[DONE]') {
+                            // 使用正则表达式匹配 SSE 前缀
+                            const sseMatch = trimmed.match(/^data:\s*/);
+                            if (sseMatch) {
+                                const jsonStr = trimmed.substring(sseMatch[0].length);
 
-                                try {
-                                    const chunk = JSON.parse(jsonStr);
+                                if (jsonStr && jsonStr !== '[DONE]') {
+                                    try {
+                                        const chunk = JSON.parse(jsonStr);
 
-                                    // 提取内容（OpenAI 标准格式）
-                                    const delta = chunk.choices?.[0]?.delta?.content;
-                                    if (delta) {
-                                        fullText += delta;
-                                        console.log('✅ [流式模式] 从剩余 buffer 中提取到内容，长度:', delta.length);
+                                        // 检测 finish_reason
+                                        const finishReason = chunk.choices?.[0]?.finish_reason;
+                                        if (finishReason === 'length') {
+                                            isTruncated = true;
+                                            console.warn('⚠️ [流式模式] 剩余 buffer 检测到截断 (finish_reason: length)');
+                                        }
+
+                                        // DeepSeek 兼容
+                                        const reasoningContent = chunk.choices?.[0]?.delta?.reasoning_content;
+                                        if (reasoningContent) {
+                                            console.log('🧠 [DeepSeek] 剩余 buffer 中检测到 reasoning_content');
+                                        }
+
+                                        // 提取内容（OpenAI 标准格式）
+                                        const delta = chunk.choices?.[0]?.delta?.content;
+                                        if (delta) {
+                                            fullText += delta;
+                                            console.log('✅ [流式模式] 从剩余 buffer 中提取到内容，长度:', delta.length);
+                                        }
+
+                                        // 兼容其他可能的格式
+                                        if (!delta && chunk.choices?.[0]?.text) {
+                                            fullText += chunk.choices[0].text;
+                                            console.log('✅ [流式模式] 从剩余 buffer 中提取到 text，长度:', chunk.choices[0].text.length);
+                                        }
+                                    } catch (parseErr) {
+                                        console.warn('⚠️ [流式解析] 剩余 buffer JSON 解析失败:', parseErr.message);
+                                        console.warn('   内容 (前100字符):', jsonStr.substring(0, 100));
                                     }
-
-                                    // 兼容其他可能的格式
-                                    if (!delta && chunk.choices?.[0]?.text) {
-                                        fullText += chunk.choices[0].text;
-                                        console.log('✅ [流式模式] 从剩余 buffer 中提取到 text，长度:', chunk.choices[0].text.length);
-                                    }
-                                } catch (parseErr) {
-                                    console.warn('⚠️ [流式解析] 剩余 buffer JSON 解析失败:', jsonStr.substring(0, 100), parseErr);
                                 }
                             }
                         }
@@ -5284,6 +5335,12 @@ async function callIndependentAPI(prompt) {
                         console.error('❌ [流式解析] 处理剩余 buffer 时出错:', bufferErr);
                         // 不抛出错误，避免影响已经成功接收的内容
                     }
+                }
+
+                // ✅ 改进 3: 如果检测到截断，在文本末尾添加视觉标记
+                if (isTruncated) {
+                    fullText += '\n\n[⚠️ 内容已因达到最大Token限制而截断]';
+                    console.warn('⚠️ [流式模式] 已在输出末尾添加截断标记');
                 }
 
                 console.log(`✅ [流式模式] 累积文本长度: ${fullText.length} 字符`);
