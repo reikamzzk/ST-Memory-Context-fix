@@ -1,5 +1,5 @@
 // ========================================================================
-// 记忆表格 v1.2.7
+// 记忆表格 v1.2.8
 // SillyTavern 记忆管理系统 - 提供表格化记忆、自动总结、批量填表等功能
 // ========================================================================
 (function() {
@@ -12,10 +12,10 @@
     }
     window.GaigaiLoaded = true;
 
-    console.log('🚀 记忆表格 v1.2.7 启动');
+    console.log('🚀 记忆表格 v1.2.8 启动');
 
     // ==================== 全局常量定义 ====================
-    const V = 'v1.2.7';
+    const V = 'v1.2.8';
     const SK = 'gg_data';              // 数据存储键
     const UK = 'gg_ui';                // UI配置存储键
     const PK = 'gg_prompts';           // 提示词存储键
@@ -46,10 +46,14 @@ const C = {
         autoSummaryFloor: 50,
         autoSummaryPrompt: false,      // 自动总结发起模式（true=静默发起，false=弹窗确认）
         autoSummarySilent: false,      // 自动总结完成模式（true=静默保存，false=弹窗编辑）
+        autoSummaryDelay: false,       // 自动总结-延迟开关
+        autoSummaryDelayCount: 5,      // 自动总结-延迟层数
         autoBackfill: false,
         autoBackfillFloor: 10,
         autoBackfillPrompt: false,     // 批量填表发起模式（true=静默发起，false=弹窗确认）
         autoBackfillSilent: false,     // 批量填表完成模式（true=静默保存，false=弹窗显示结果）
+        autoBackfillDelay: false,      // 批量填表-延迟开关
+        autoBackfillDelayCount: 5,     // 批量填表-延迟层数
         log: true,
         pc: true,
         hideTag: true,
@@ -217,9 +221,9 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
 2. 过去式表达：所有记录必须使用过去式（如"达成了"、"接管了"、"导致了"）。
 3. 有效信息筛选：
    - 忽略无剧情推动作用的流水账（如单纯的菜单描述、普通起居）。
-   - 主线剧情和支线剧情严禁记录同一事件。
    - 强制保留：若在交互中达成了【口头承诺】、【交易约定】或设定了【具体条件】（即使发生在吃饭/闲聊场景），必须完整记录约定的具体内容（如"答应了xx换取xx"）。
    - 强制保留：关键冲突、重要决策或剧烈的情感波动。
+   - 杜绝重复：主线和支线剧情严禁记录同一事件，当同一个剧情涉及多方，并根据规则判定为主线或支线后需记录清晰，另外一条线无需重复。
 4. 纯文本格式：严禁使用 Markdown 列表符（如 -、*、#），严禁使用加粗。每条记录之间仅用换行分隔。
 
 【总结内容分类】
@@ -4261,7 +4265,7 @@ function bnd() {
      * @param {boolean} isSilent - 是否静默模式（不弹窗直接保存）
      * @param {boolean} isBatch - 是否分批执行模式（避免阻塞式弹窗）
      */
-async function callAIForSummary(forceStart = null, forceEnd = null, forcedMode = null, isSilent = false, isBatch = false) {
+async function callAIForSummary(forceStart = null, forceEnd = null, forcedMode = null, isSilent = false, isBatch = false, skipSave = false) {
     await loadConfig(); // 强制刷新配置
     
     const currentMode = forcedMode || API_CONFIG.summarySource;
@@ -4631,7 +4635,7 @@ async function callAIForSummary(forceStart = null, forceEnd = null, forcedMode =
                 }
             }
             
-            if (isSilent) {
+            if (isSilent && !skipSave) {
                 m.sm.save(cleanSummary, currentRangeStr); // ✅ 静默模式：自动保存范围
                 await syncToWorldInfo(cleanSummary); // 同步到世界书
                 // ✅ 只有明确是 table 模式，且不是自动触发的聊天总结，才标记表格
@@ -4672,6 +4676,10 @@ async function callAIForSummary(forceStart = null, forceEnd = null, forcedMode =
                     console.log('✅ 自动总结已静默完成');
                 }
                 return { success: true }; // ✅ 静默模式也返回成功结果
+            } else if (isSilent && skipSave) {
+                // 🔄 重新生成模式：跳过保存，直接返回总结内容
+                console.log('🔄 [重新生成] 跳过保存，返回生成的总结内容');
+                return { success: true, summary: cleanSummary };
             } else {
                 // 传递重新生成所需的参数
                 const regenParams = { forceStart, forceEnd, forcedMode, isSilent };
@@ -4787,21 +4795,24 @@ function showSummaryPreview(summaryText, sourceTables, isTableMode, newIndex = n
                         // 临时标记：避免弹出新窗口
                         window._isRegeneratingInPopup = true;
 
-                        // 重新调用 API
-                        await callAIForSummary(
+                        // 重新调用 API，传入 skipSave = true (第6个参数) 以跳过保存
+                        const res = await callAIForSummary(
                             regenParams.forceStart,
                             regenParams.forceEnd,
                             regenParams.forcedMode,
-                            true  // 强制静默模式，不弹新窗口
+                            true,  // isSilent: 强制静默模式，不弹新窗口
+                            false, // isBatch
+                            true   // skipSave: 跳过保存，避免创建重复条目
                         );
 
-                        // 加载新生成的总结
-                        const newSummary = m.sm.load();
-                        if (newSummary && newSummary.trim()) {
-                            $('#summary-editor').val(newSummary);
+                        // 直接从返回结果中获取新生成的总结
+                        if (res && res.success && res.summary && res.summary.trim()) {
+                            $('#summary-editor').val(res.summary);
                             if (typeof toastr !== 'undefined') {
                                 toastr.success('内容已刷新', '重新生成', { timeOut: 1000, preventDuplicates: true });
                             }
+                        } else {
+                            throw new Error('重新生成返回空内容');
                         }
 
                     } catch (error) {
@@ -6549,6 +6560,16 @@ async function shcf() {
                     <input type="number" id="c-auto-bf-floor" value="${C.autoBackfillFloor || 10}" min="2" style="width:50px; text-align:center; padding:2px; border-radius:4px; border:1px solid rgba(0,0,0,0.2);">
                     <span>层触发一次</span>
                 </div>
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; padding-left:8px; border-left:2px solid rgba(255,152,0,0.3);">
+                    <input type="checkbox" id="c-auto-bf-delay" ${C.autoBackfillDelay ? 'checked' : ''} style="margin:0;">
+                    <label for="c-auto-bf-delay" style="cursor:pointer; display:flex; align-items:center; gap:4px; margin:0;">
+                        <span>⏱️ 延迟启动</span>
+                    </label>
+                    <span style="opacity:0.7;">|</span>
+                    <span style="opacity:0.8;">滞后</span>
+                    <input type="number" id="c-auto-bf-delay-count" value="${C.autoBackfillDelayCount || 5}" min="1" style="width:40px; text-align:center; padding:2px; border-radius:4px; border:1px solid rgba(0,0,0,0.2);">
+                    <span style="opacity:0.8;">层再执行</span>
+                </div>
                 <div style="background: rgba(33, 150, 243, 0.08); border: 1px solid rgba(33, 150, 243, 0.2); border-radius: 4px; padding: 8px; margin-bottom: 6px;">
                     <div style="font-weight: 600; margin-bottom: 4px; color: #1976d2; font-size: 10px;">🔔 发起模式</div>
                     <label style="display:flex; align-items:center; gap:6px; cursor:pointer; margin-bottom: 2px;">
@@ -6650,6 +6671,17 @@ async function shcf() {
                         <input type="radio" name="cfg-sum-src" value="chat" ${API_CONFIG.summarySource === 'chat' ? 'checked' : ''} style="margin-right:4px;">
                         💬 聊天历史
                     </label>
+                </div>
+
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; padding-left:8px; border-left:2px solid rgba(255,152,0,0.3); font-size:11px;">
+                    <input type="checkbox" id="c-auto-sum-delay" ${C.autoSummaryDelay ? 'checked' : ''} style="margin:0;">
+                    <label for="c-auto-sum-delay" style="cursor:pointer; display:flex; align-items:center; gap:4px; margin:0;">
+                        <span>⏱️ 延迟启动</span>
+                    </label>
+                    <span style="opacity:0.7;">|</span>
+                    <span style="opacity:0.8;">滞后</span>
+                    <input type="number" id="c-auto-sum-delay-count" value="${C.autoSummaryDelayCount || 5}" min="1" style="width:40px; text-align:center; padding:2px; border-radius:4px; border:1px solid rgba(0,0,0,0.2);">
+                    <span style="opacity:0.8;">层再执行</span>
                 </div>
 
                 <div style="background: rgba(33, 150, 243, 0.08); border: 1px solid rgba(33, 150, 243, 0.2); border-radius: 4px; padding: 8px; margin-bottom: 6px;">
@@ -7070,6 +7102,8 @@ async function shcf() {
             C.autoBackfillFloor = parseInt($('#c-auto-bf-floor').val()) || 10;
             C.autoBackfillPrompt = $('#c-auto-bf-prompt').is(':checked');
             C.autoBackfillSilent = $('#c-auto-bf-silent').is(':checked');
+            C.autoBackfillDelay = $('#c-auto-bf-delay').is(':checked');
+            C.autoBackfillDelayCount = parseInt($('#c-auto-bf-delay-count').val()) || 5;
 
             C.contextLimit = $('#c-limit-on').is(':checked');
             C.contextLimitCount = parseInt($('#c-limit-count').val());
@@ -7085,6 +7119,8 @@ async function shcf() {
             C.autoSummaryFloor = parseInt($('#c-auto-floor').val());
             C.autoSummaryPrompt = $('#c-auto-sum-prompt').is(':checked');
             C.autoSummarySilent = $('#c-auto-sum-silent').is(':checked');
+            C.autoSummaryDelay = $('#c-auto-sum-delay').is(':checked');
+            C.autoSummaryDelayCount = parseInt($('#c-auto-sum-delay-count').val()) || 5;
             API_CONFIG.summarySource = $('input[name="cfg-sum-src"]:checked').val();
             
             // ✨ 保存标签过滤配置
@@ -7493,19 +7529,29 @@ function omsg(id) {
             const lastBfIndex = API_CONFIG.lastBackfillIndex || 0;
             const currentCount = x.chat.length;
             const diff = currentCount - lastBfIndex;
-            const threshold = C.autoBackfillFloor || 10;
 
-            if (diff >= threshold) {
-                console.log(`⚡ [自动检测] 当前:${currentCount} - 上次:${lastBfIndex} = 差值:${diff} (阈值:${threshold})`);
+            // 计算有效阈值
+            const bfInterval = C.autoBackfillFloor || 10;
+            // 如果开启延迟，则阈值 = 间隔 + 延迟层数；否则阈值 = 间隔
+            const bfDelay = C.autoBackfillDelay ? (C.autoBackfillDelayCount || 0) : 0;
+            const bfThreshold = bfInterval + bfDelay;
+
+            if (diff >= bfThreshold) {
+                // 计算目标结束点 (Target End Floor)
+                // 如果开启延迟：结束点 = 上次位置 + 间隔 (只处理这一段，后面的留作缓冲)
+                // 如果关闭延迟：结束点 = 当前位置 (处理所有未记录的内容，保持旧逻辑)
+                const targetEndIndex = C.autoBackfillDelay ? (lastBfIndex + bfInterval) : currentCount;
+
+                console.log(`⚡ [Auto Backfill] 触发逻辑! 当前:${currentCount}, 上次:${lastBfIndex}, 间隔:${bfInterval}, 延迟:${bfDelay}, 阈值:${bfThreshold}, 目标结束点:${targetEndIndex}`);
 
                 // ✨ 发起模式逻辑（与完成模式一致）：勾选=静默，未勾选=弹窗
                 if (!C.autoBackfillPrompt) {
                     // 弹窗模式（未勾选时）
-                    showAutoTaskConfirm('backfill', currentCount, lastBfIndex, threshold).then(result => {
+                    showAutoTaskConfirm('backfill', currentCount, lastBfIndex, bfThreshold).then(result => {
                         if (result.action === 'confirm') {
                             if (result.postpone > 0) {
                                 // 用户选择顺延
-                                API_CONFIG.lastBackfillIndex = currentCount - threshold + result.postpone;
+                                API_CONFIG.lastBackfillIndex = currentCount - bfThreshold + result.postpone;
                                 localStorage.setItem(AK, JSON.stringify(API_CONFIG));
 
                                 // ✅✅✅ 修复：同步到云端，防止 loadConfig 回滚
@@ -7516,14 +7562,14 @@ function omsg(id) {
                                 }
 
                                 m.save(); // ✅ 修复：同步进度到聊天记录
-                                console.log(`⏰ [批量填表] 顺延 ${result.postpone} 楼，新触发点：${API_CONFIG.lastBackfillIndex + threshold}`);
+                                console.log(`⏰ [批量填表] 顺延 ${result.postpone} 楼，新触发点：${API_CONFIG.lastBackfillIndex + bfThreshold}`);
                                 if (typeof toastr !== 'undefined') {
                                     toastr.info(`批量填表已顺延 ${result.postpone} 楼`, '记忆表格');
                                 }
                             } else {
                                 // 立即执行
                                 if (typeof autoRunBackfill === 'function') {
-                                    autoRunBackfill(lastBfIndex, currentCount);
+                                    autoRunBackfill(lastBfIndex, targetEndIndex);
                                     hasBackfilledThisTurn = true;
                                 }
                             }
@@ -7534,7 +7580,7 @@ function omsg(id) {
                 } else {
                     // 静默模式（勾选时）：直接执行
                     if (typeof autoRunBackfill === 'function') {
-                        autoRunBackfill(lastBfIndex, currentCount);
+                        autoRunBackfill(lastBfIndex, targetEndIndex);
                         hasBackfilledThisTurn = true;
                     }
                 }
@@ -7549,20 +7595,31 @@ function omsg(id) {
             const currentCount = x.chat.length;
             const newMsgCount = currentCount - lastIndex;
 
-            if (newMsgCount >= C.autoSummaryFloor) {
+            // 计算有效阈值
+            const sumInterval = C.autoSummaryFloor || 50;
+            // 如果开启延迟，则阈值 = 间隔 + 延迟层数；否则阈值 = 间隔
+            const sumDelay = C.autoSummaryDelay ? (C.autoSummaryDelayCount || 0) : 0;
+            const sumThreshold = sumInterval + sumDelay;
+
+            if (newMsgCount >= sumThreshold) {
+                // 计算目标结束点 (Target End Floor)
+                // 如果开启延迟：结束点 = 上次位置 + 间隔 (只处理这一段，后面的留作缓冲)
+                // 如果关闭延迟：结束点 = 当前位置 (处理所有未记录的内容，保持旧逻辑)
+                const targetEndIndex = C.autoSummaryDelay ? (lastIndex + sumInterval) : currentCount;
+
                 if (hasBackfilledThisTurn) {
                     console.log(`🚦 [防撞车] 总结任务顺延。`);
                 } else {
-                    console.log(`🤖 [自动总结] 触发`);
+                    console.log(`🤖 [Auto Summary] 触发逻辑! 当前:${currentCount}, 上次:${lastIndex}, 间隔:${sumInterval}, 延迟:${sumDelay}, 阈值:${sumThreshold}, 目标结束点:${targetEndIndex}`);
 
                     // ✨ 发起模式逻辑（与完成模式一致）：勾选=静默，未勾选=弹窗
                     if (!C.autoSummaryPrompt) {
                         // 弹窗模式（未勾选时）
-                        showAutoTaskConfirm('summary', currentCount, lastIndex, C.autoSummaryFloor).then(result => {
+                        showAutoTaskConfirm('summary', currentCount, lastIndex, sumThreshold).then(result => {
                             if (result.action === 'confirm') {
                                 if (result.postpone > 0) {
                                     // 用户选择顺延
-                                    API_CONFIG.lastSummaryIndex = currentCount - C.autoSummaryFloor + result.postpone;
+                                    API_CONFIG.lastSummaryIndex = currentCount - sumThreshold + result.postpone;
                                     localStorage.setItem(AK, JSON.stringify(API_CONFIG));
 
                                     // ✅✅✅ 修复：同步到云端，防止 loadConfig 回滚
@@ -7573,13 +7630,13 @@ function omsg(id) {
                                     }
 
                                     m.save(); // ✅ 修复：同步进度到聊天记录
-                                    console.log(`⏰ [自动总结] 顺延 ${result.postpone} 楼，新触发点：${API_CONFIG.lastSummaryIndex + C.autoSummaryFloor}`);
+                                    console.log(`⏰ [自动总结] 顺延 ${result.postpone} 楼，新触发点：${API_CONFIG.lastSummaryIndex + sumThreshold}`);
                                     if (typeof toastr !== 'undefined') {
                                         toastr.info(`自动总结已顺延 ${result.postpone} 楼`, '记忆表格');
                                     }
                                 } else {
-                                    // 立即执行（传入完成后的静默参数）
-                                    callAIForSummary(null, null, null, C.autoSummarySilent);
+                                    // 立即执行（传入目标结束点和完成后的静默参数）
+                                    callAIForSummary(null, targetEndIndex, null, C.autoSummarySilent);
                                 }
                             } else {
                                 console.log(`🚫 [自动总结] 用户取消`);
@@ -7587,7 +7644,7 @@ function omsg(id) {
                         });
                     } else {
                         // 静默模式（勾选时）：直接执行
-                        callAIForSummary(null, null, null, C.autoSummarySilent);
+                        callAIForSummary(null, targetEndIndex, null, C.autoSummarySilent);
                     }
                 }
             }
