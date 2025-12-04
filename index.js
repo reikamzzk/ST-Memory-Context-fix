@@ -1,5 +1,5 @@
 // ========================================================================
-// 记忆表格 v1.2.8
+// 记忆表格 v1.2.9
 // SillyTavern 记忆管理系统 - 提供表格化记忆、自动总结、批量填表等功能
 // ========================================================================
 (function() {
@@ -12,10 +12,10 @@
     }
     window.GaigaiLoaded = true;
 
-    console.log('🚀 记忆表格 v1.2.8 启动');
+    console.log('🚀 记忆表格 v1.2.9 启动');
 
     // ==================== 全局常量定义 ====================
-    const V = 'v1.2.8';
+    const V = 'v1.2.9';
     const SK = 'gg_data';              // 数据存储键
     const UK = 'gg_ui';                // UI配置存储键
     const PK = 'gg_prompts';           // 提示词存储键
@@ -212,9 +212,9 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
 【核心指令：动态融合策略】
 为了防止长期记忆混乱，你必须将"设定变更"与"剧情事件"融合，严禁将身份变化单独隔离。
 1. 身份变更锚定：当角色的社会身份、职业、头衔发生变化时，必须在剧情描述中显式指出（例如："xx毕业并正式接管xx集团，身份由学生转变为总裁"）。
-2. 资产与资源流转：当获得/失去关键物品、道具、公司、房产或人际关系（如情感维系/确立盟友/仇敌）时，必须记录在发生的时间点上。
+2. 资产与资源流转：当获得/失去关键物品、道具、公司、房产或人际关系（如情感维系/确立盟友/仇敌）时，必须记录在发生的时间点上。 
 3. 状态覆盖原则：叙述必须体现"新状态覆盖旧状态"的逻辑，使用如"从此开始"、"不再是"等定性词汇。
-4. 关键变动追踪：必须重点记录角色状态的突变（如怀孕/流产、残疾/康复、死亡/复活、失忆/恢复）及关系的根本性逆转（如结盟/决裂）。
+4. 关键变动追踪：必须重点记录角色状态的突变（如怀孕/流产、残疾/康复、死亡/复活、失忆/恢复）及关系的根本性逆转（如结盟/决裂/恋爱,如从朋友到恋人、从陌生人到朋友、从恋人到分手、从盟友到背叛）时，必须记录在发生的时间点上。
 
 【基础原则】
 1. 绝对客观：严禁使用主观、情绪化或心理描写的词汇，仅记录事实、行为与结果。
@@ -5141,6 +5141,9 @@ async function callIndependentAPI(prompt) {
 
         console.log(`🔗 [直连URL] ${directUrl}`);
 
+        // ✅ 提前定义模型名（小写）用于条件判断
+        const modelLower = (model || '').toLowerCase();
+
         // 构建请求体（根据 Provider 调整格式）
         let requestBody = {
             model: model,
@@ -5162,15 +5165,19 @@ async function callIndependentAPI(prompt) {
                 generationConfig: {
                     temperature: temperature,
                     maxOutputTokens: maxTokens
-                },
-                // ✅✅✅ 强制禁用所有安全过滤，防止因安全检查导致内容截断
-                safetySettings: [
+                }
+            };
+
+            // ✅ 仅当模型名包含 'gemini' 时才添加安全设置
+            if (modelLower.includes('gemini')) {
+                requestBody.safetySettings = [
                     { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
                     { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
                     { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
                     { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
-                ]
-            };
+                ];
+            }
+
             // Gemini 不支持标准流式，强制改回非流式
             delete requestBody.stream;
         } else {
@@ -5180,7 +5187,6 @@ async function callIndependentAPI(prompt) {
 
         // ✅✅✅ 针对 Gemini 代理/兼容模式的特殊处理：即使 provider 不是 'gemini'，
         // 只要模型名包含 'gemini'，也需要注入安全设置（OpenAI 格式和 Gemini 格式都加上）
-        const modelLower = (model || '').toLowerCase();
         if (provider !== 'gemini' && modelLower.includes('gemini')) {
             console.log('🔧 [Gemini 代理模式] 检测到模型名包含 gemini，强制注入安全设置');
 
@@ -5486,6 +5492,15 @@ function parseApiResponse(data) {
     }
 
     if (!content || !content.trim()) {
+        // ✅ 检查是否因安全过滤被阻止
+        const finishReason = data.choices?.[0]?.finish_reason ||
+                           data.data?.choices?.[0]?.finish_reason ||
+                           data.candidates?.[0]?.finishReason;
+
+        if (finishReason === 'safety' || finishReason === 'content_filter' || finishReason === 'SAFETY') {
+            throw new Error('Gemini Safety Filter triggered - 内容被安全审查拦截');
+        }
+
         throw new Error('API 返回内容为空');
     }
 
@@ -5544,7 +5559,8 @@ async function callTavernAPI(prompt) {
         if (typeof context.generateRaw === 'function') {
             let result;
             try {
-                result = await context.generateRaw({
+                // 构建生成参数
+                const generateParams = {
                     prompt: finalPrompt, // 👈 这里的格式已经根据模型自动适配了
                     images: [],
                     quiet: true,
@@ -5564,7 +5580,19 @@ async function callTavernAPI(prompt) {
                     // ✅✅✅ 清空停止符，防止遇到人名就截断
                     stop: [],
                     stop_sequence: []
-                });
+                };
+
+                // ✅ 仅当模型名包含 'gemini' 时才添加安全设置
+                if (isGemini) {
+                    generateParams.safety_settings = [
+                        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+                        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+                        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+                        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+                    ];
+                }
+
+                result = await context.generateRaw(generateParams);
                 console.log('✅ [直连] 调用成功');
             } catch (err) {
                 console.error('❌ 酒馆API调用失败:', err);
@@ -5801,10 +5829,18 @@ $('#fetch-models-btn').on('click', async function() {
                 console.log('📡 [Plan A] 尝试后端代理...');
                 const csrfToken = await getCsrfToken();
 
+                // ✅ 添加时间戳参数防止缓存（Gemini 除外，因为它的 API 拒绝未知参数）
+                let apiUrlWithTimestamp = apiUrl;
+                if (provider !== 'gemini') {
+                    const timestamp = Date.now();
+                    const separator = apiUrl.includes('?') ? '&' : '?';
+                    apiUrlWithTimestamp = `${apiUrl}${separator}_t=${timestamp}`;
+                }
+
                 const proxyPayload = {
                     chat_completion_source: (provider === 'gemini') ? 'gemini' : 'custom',
-                    custom_url: apiUrl,
-                    reverse_proxy: apiUrl,
+                    custom_url: apiUrlWithTimestamp,
+                    reverse_proxy: apiUrlWithTimestamp,
                     proxy_password: apiKey,
 
                     // ✅ [移动端优化] 显式传递 Authorization Header，防止平板端代理转发时丢失 Key
@@ -5853,8 +5889,10 @@ $('#fetch-models-btn').on('click', async function() {
 
                 let directUrl = '';
                 let headers = { 'Content-Type': 'application/json' };
+                const timestamp = Date.now();
 
                 if (provider === 'gemini') {
+                    // ✅ Gemini API 拒绝未知参数，不添加时间戳，依靠 cache: 'no-store' 防止缓存
                     directUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
                 } else if (provider === 'claude') {
                     // Claude 使用硬编码列表（API 不提供公开的模型列表端点）
@@ -5869,7 +5907,11 @@ $('#fetch-models-btn').on('click', async function() {
                     return;
                 } else {
                     // 智能拼接 /models
-                    directUrl = apiUrl.endsWith('/models') ? apiUrl : `${apiUrl}/models`;
+                    const baseUrl = apiUrl.endsWith('/models') ? apiUrl : `${apiUrl}/models`;
+                    // 添加时间戳参数
+                    const separator = baseUrl.includes('?') ? '&' : '?';
+                    directUrl = `${baseUrl}${separator}_t=${timestamp}`;
+
                     // 只有当 authHeader 存在时才添加 Authorization header
                     if (authHeader !== undefined) {
                         headers['Authorization'] = authHeader;
@@ -5878,7 +5920,12 @@ $('#fetch-models-btn').on('click', async function() {
 
                 console.log(`直连地址: ${directUrl}`);
 
-                const resp = await fetch(directUrl, { method: 'GET', headers: headers });
+                // ✅ 添加 cache: 'no-store' 防止浏览器缓存
+                const resp = await fetch(directUrl, {
+                    method: 'GET',
+                    headers: headers,
+                    cache: 'no-store'
+                });
                 if (!resp.ok) throw new Error(`直连状态码 ${resp.status}`);
 
                 const data = await resp.json();
