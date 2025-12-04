@@ -1,5 +1,5 @@
 // ========================================================================
-// 记忆表格 v1.2.5
+// 记忆表格 v1.2.6
 // SillyTavern 记忆管理系统 - 提供表格化记忆、自动总结、批量填表等功能
 // ========================================================================
 (function() {
@@ -12,10 +12,10 @@
     }
     window.GaigaiLoaded = true;
 
-    console.log('🚀 记忆表格 v1.2.5 启动');
+    console.log('🚀 记忆表格 v1.2.6 启动');
 
     // ==================== 全局常量定义 ====================
-    const V = 'v1.2.5';
+    const V = 'v1.2.6';
     const SK = 'gg_data';              // 数据存储键
     const UK = 'gg_ui';                // UI配置存储键
     const PK = 'gg_prompts';           // 提示词存储键
@@ -427,6 +427,8 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
     let summarizedRows = {};       // 已总结的行索引（用于标记绿色）
     let pageStack = [];
     let snapshotHistory = {}; // ✅ 存储每条消息的快照
+    // 🔐【新增】用来存储所有会话的独立快照数据，key为chatId，实现会话隔离
+    window.GaigaiSnapshotStore = window.GaigaiSnapshotStore || {};
     let lastProcessedMsgIndex = -1; // ✅ 最后处理的消息索引
     let isRegenerating = false; // ✅ 标记是否正在重新生成
     let deletedMsgIndex = -1; // ✅ 记录被删除的消息索引
@@ -3522,7 +3524,7 @@ function bnd() {
 
             updateCurrentSnapshot();
 
-            refreshTable(ti);
+            shw();  // ✅ 修复：删除行后强制重绘整个界面，确保 UI 刷新
             updateTabCount(ti);
 
             // ✅ 动态等待时间：根据行数调整
@@ -7935,26 +7937,37 @@ async function autoRunBackfill(start, end, isManual = false) {
         // ⚡ [Pre-loading] 后台预加载配置，无需等待，让用户点配置按钮时秒开
         loadConfig().catch(e => console.error('⚠️ [配置预加载] 失败:', e));
 
-        // ✅ 清空探针数据，防止跨会话泄漏
-        window.Gaigai.lastRequestData = null;
+        // 1. 🔐【关键修改】在切换前，将当前内存里的快照"归档"到旧会话的仓库中
+        // m.id 此时还是旧会话的 ID
+        if (m.id) {
+            window.GaigaiSnapshotStore[m.id] = snapshotHistory;
+            console.log(`💾 [ochat] 已暂存会话 [${m.id}] 的快照记录`);
+        }
 
-        lastInternalSaveTime = 0;
+        // 2. 加载新会话数据 (这会更新 m.id)
         m.load();
-
         thm();
 
-        // 重置状态
+        // 重置临时状态
+        window.Gaigai.lastRequestData = null;
+        lastInternalSaveTime = 0;
         lastProcessedMsgIndex = -1;
         isRegenerating = false;
         deletedMsgIndex = -1;
         processedMessages.clear();
 
-        const ctx = m.ctx();
-        const currentLen = ctx && ctx.chat ? ctx.chat.length : 0;
+        // 3. 🔐【关键修改】从仓库中"取出"新会话的快照 (如果之前存过)
+        // 此时 m.id 已经是新会话的 ID 了
+        if (m.id && window.GaigaiSnapshotStore[m.id]) {
+            snapshotHistory = window.GaigaiSnapshotStore[m.id];
+            console.log(`📂 [ochat] 已恢复会话 [${m.id}] 的独立快照记录`);
+        } else {
+            // 如果是第一次进入这个会话，初始化为空对象
+            snapshotHistory = {};
+            console.log(`🆕 [ochat] 会话 [${m.id}] 首次加载，初始化空快照`);
+        }
 
-        console.log(`📂 [ochat] 检测到聊天变更 (当前楼层: ${currentLen})`);
-
-        // 1. 确保 -1 号创世快照存在 (兜底)
+        // 4. 确保 -1 号创世快照存在 (兜底)
         if (!snapshotHistory['-1']) {
             snapshotHistory['-1'] = {
                 data: m.all().slice(0, 8).map(sh => {
@@ -7965,9 +7978,15 @@ async function autoRunBackfill(start, end, isManual = false) {
                 summarized: {},
                 timestamp: 0
             };
+            console.log(`🎬 [ochat] 已创建会话 [${m.id}] 的创世快照 [-1]`);
         }
 
-        // 2. ⚡ [关键逻辑] 当楼层变化时(如删消息)，立即为当前的"最后一条消息"建立快照。
+        const ctx = m.ctx();
+        const currentLen = ctx && ctx.chat ? ctx.chat.length : 0;
+
+        console.log(`📂 [ochat] 检测到聊天变更 (当前楼层: ${currentLen})`);
+
+        // 5. ⚡ [关键逻辑] 当楼层变化时(如删消息)，立即为当前的"最后一条消息"建立快照。
         // 这代表了"在该楼层结束时，表格的最终状态" (包含了用户的手动修改/全清)。
         // 这样下次重Roll后续楼层时，就能正确回滚到这个状态。
         if (currentLen > 0) {
