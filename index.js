@@ -1149,8 +1149,10 @@
             // 🛑 [增强版熔断保护] 针对用户反馈的300楼数据丢失问题
             // 逻辑：如果是本次会话刚启动后的第一次尝试保存(lastInternalSaveTime === 0)，
             // 且检测到是长对话(>10条消息)，但表格数据量极少(<5行)，
-            // 这极大概率是数据加载失败了，必须强制阻止保存，防止覆盖云端存档！
-            if (!force && lastInternalSaveTime === 0 && ctx && ctx.chat && ctx.chat.length > 10 && totalRows < 5) {
+            // ✨ 修复：同时检查本地是否已有存档。如果本地无存档(hasLocalData为null)，说明是新安装插件，允许保存！
+            const hasLocalData = localStorage.getItem(`${SK}_${id}`);
+            
+            if (!force && lastInternalSaveTime === 0 && ctx && ctx.chat && ctx.chat.length > 10 && totalRows < 5 && hasLocalData) {
                 console.error('🛑 [严重熔断] 检测到长对话冷启动时数据异常（可能加载失败），已阻止毁灭性覆盖保存！');
                 console.error(`   对话长度: ${ctx.chat.length} 条 | 表格数据: ${totalRows} 行 → 数据比例严重失衡`);
                 if (typeof toastr !== 'undefined') {
@@ -2411,11 +2413,11 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
 
         /* 2. 容器 */
         .g-ov { background: rgba(0, 0, 0, 0.35) !important; position: fixed !important; top: 0; left: 0; right: 0; bottom: 0; z-index: 20000 !important; display: flex !important; align-items: center !important; justify-content: center !important; }
-        .g-w { 
-            background: rgba(255, 255, 255, 0.6) !important; 
-            backdrop-filter: blur(20px) saturate(180%) !important; 
-            -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
-            border: 1px solid rgba(255, 255, 255, 0.4) !important; 
+        .g-w {
+            background: #fcfcfc !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+            border: 1px solid rgba(255, 255, 255, 0.6) !important;
             box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3) !important;
             border-radius: 12px !important;
             display: flex !important; flex-direction: column !important;
@@ -2704,14 +2706,18 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
             $('#big-editor').focus();
             $('#save-edit').on('click', function () {
                 const newValue = $('#big-editor').val();
-                const d = {}; d[ci] = newValue;
-                sh.upd(ri, d);
-                lastManualEditTime = Date.now(); // ✨ 新增
-                m.save();
+                
+                if (sh && sh.r[ri]) {
+                    sh.r[ri][ci] = newValue;
+                }
 
+                lastManualEditTime = Date.now(); 
+                m.save(true);
+                
                 updateCurrentSnapshot();
 
-                $(`.g-e[data-r="${ri}"][data-c="${ci}"]`).text(newValue);
+                // ✅ 修复：限定范围，只更新当前表格(g-tbc data-i=ti)里面的那个格子
+                $(`.g-tbc[data-i="${ti}"] .g-e[data-r="${ri}"][data-c="${ci}"]`).text(newValue);
                 $o.remove();
             });
             $('#cancel-edit').on('click', () => $o.remove());
@@ -3218,17 +3224,20 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
             const ti = parseInt($('.g-t.act').data('i'));
             const ri = parseInt($(this).data('r'));
             const ci = parseInt($(this).data('c'));
-            const v = $(this).text().trim();
+            const v = $(this).text().trim(); // 获取你现在看到的文字（哪怕是空的）
             const sh = m.get(ti);
-            if (sh) {
-                const d = {};
-                d[ci] = v;
-                sh.upd(ri, d);
-                lastManualEditTime = Date.now(); // ✨ 新增
-                m.save();
+            
+            // 确保这行数据存在
+            if (sh && sh.r[ri]) {
+                // 🛑 【核心修改】绕过 sh.upd() 智能追加逻辑，直接暴力写入！
+                // 只有这样，你删成空白，它才会真的变成空白
+                sh.r[ri][ci] = v; 
+                
+                lastManualEditTime = Date.now();
+                m.save(true); // 强制保存，无视熔断保护
                 updateTabCount(ti);
 
-                // ✅✅✅ [插入] 手动编辑后，立即同步快照
+                // ✅ 同步快照，防止回档
                 updateCurrentSnapshot();
             }
         });
@@ -3306,7 +3315,7 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
                 }
 
                 lastManualEditTime = Date.now();
-                m.save();
+                m.save(true);
 
                 updateCurrentSnapshot();
 
@@ -3361,7 +3370,7 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
                 }
 
                 lastManualEditTime = Date.now();
-                m.save();
+                m.save(true);
                 refreshTable(ti);
                 updateTabCount(ti);
                 updateCurrentSnapshot();
@@ -4968,6 +4977,12 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
     function processApiUrl(url, provider) {
         if (!url) return '';
 
+        // 如果是“独立反代”模式，直接原样返回！
+        if (provider === 'proxy_only') {
+            return url.trim(); 
+        }
+
+
         // 1. 去除末尾斜杠
         url = url.trim().replace(/\/+$/, '');
 
@@ -5044,11 +5059,11 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
         // ========================================
         // 分流逻辑
         // ========================================
-        const useProxy = (provider === 'local' || provider === 'openai' || provider === 'claude');
+        const useProxy = (provider === 'local' || provider === 'openai' || provider === 'claude'|| provider === 'proxy_only');
         const useDirect = (provider === 'compatible' || provider === 'deepseek' || provider === 'gemini');
 
-        // ==========================================
-        // 通道 A: 后端代理 (local, openai, claude)
+       // ==========================================
+        // 🔴 通道 A: 后端代理 (local, openai, claude, proxy_only)
         // ==========================================
         if (useProxy) {
             try {
@@ -5058,63 +5073,115 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
                 let csrfToken = '';
                 try { csrfToken = await getCsrfToken(); } catch (e) { console.warn('⚠️ CSRF获取失败', e); }
 
-                // 构建酒馆后端代理 Payload
-                const proxyPayload = {
-                    chat_completion_source: "custom",
-                    custom_url: apiUrl,
-                    reverse_proxy: apiUrl,
-                    proxy_password: apiKey,  // ✅ 始终赋值（可能为空字符串）
+                // ✨✨✨【修复插入点：智能拦截】✨✨✨
+                // 只有当：提供商是“本地/反代” 且 模型名含“gemini”时，才走修复路
+                const isLocalGemini = (provider === 'local' || provider === 'proxy_only') && model.toLowerCase().includes('gemini');
 
-                    // ✅ 基础 Headers
-                    custom_include_headers: {
-                        "Content-Type": "application/json"
-                    },
+                if (isLocalGemini) {
+                    // === 分支 1: 针对你的本地 Gemini 反代 (MakerSuite 修复逻辑) ===
+                    console.log('🔧 [智能修正] 命中 Gemini 反代，使用 Makersuite 协议...');
+                    
+                    // 1. URL 清洗：只留 Base URL
+                    let cleanBaseUrl = apiUrl.replace(/\/v1(\/|$)/, '').replace(/\/chat\/completions(\/|$)/, '').replace(/\/+$/, '');
+                    
+                    // 2. 构造 Makersuite Payload (你验证通过的满分答案)
+                    const proxyPayload = {
+                        chat_completion_source: "makersuite",
+                        reverse_proxy: cleanBaseUrl,
+                        proxy_password: apiKey,
+                        model: model,
+                        messages: cleanMessages,
+                        temperature: temperature,
+                        max_tokens: maxTokens,
+                        stream: false,
+                        custom_prompt_post_processing: "strict",
+                        use_makersuite_sysprompt: true
+                    };
 
-                    model: model,
-                    messages: cleanMessages,
-                    temperature: temperature,
-                    max_tokens: maxTokens,
-                    stream: false,
+                    const proxyResponse = await fetch('/api/backends/chat-completions/generate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                        body: JSON.stringify(proxyPayload)
+                    });
 
-                    // 兼容性参数
-                    mode: 'chat',
-                    instruction_mode: 'chat'
-                };
-
-                // 🔑 只有当 Key 不为空时，才添加 Authorization Header
-                if (authHeader) {
-                    proxyPayload.custom_include_headers["Authorization"] = authHeader;
-                    console.log('🔑 [后端代理] Authorization Header 已添加 (有密码)');
-                } else {
-                    console.log('🔓 [后端代理] 跳过 Authorization Header (无密码)');
-                }
-
-                console.log(`🌐 [后端代理] 目标: ${apiUrl} | 模型: ${model}`);
-
-                const proxyResponse = await fetch('/api/backends/chat-completions/generate', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRF-Token': csrfToken
-                    },
-                    body: JSON.stringify(proxyPayload)
-                });
-
-                // 检查 HTTP 状态码
-                if (proxyResponse.ok) {
-                    const data = await proxyResponse.json();
-                    const result = parseApiResponse(data);
-                    if (result.success) {
-                        console.log('✅ [后端代理] 成功');
-                        return result;
+                    if (proxyResponse.ok) {
+                        const text = await proxyResponse.text();
+                        try {
+                            const data = JSON.parse(text);
+                            // 兼容 Makersuite 的各种返回
+                            if (typeof data === 'string') return { success: true, summary: data };
+                            if (data.choices?.[0]?.message?.content) return { success: true, summary: data.choices[0].message.content };
+                            if (data.content) return { success: true, summary: data.content };
+                            return { success: true, summary: text };
+                        } catch (e) { return { success: true, summary: text }; }
                     }
-                    throw new Error('后端返回数据无法解析');
-                }
+                    const errText = await proxyResponse.text();
+                    throw new Error(`反代修复模式报错: ${errText}`);
 
-                // 只有当 HTTP 状态码不是 2xx 时才读取错误信息
-                const errText = await proxyResponse.text();
-                console.warn(`⚠️ [后端代理失败] ${proxyResponse.status}: ${errText.substring(0, 200)}`);
-                throw new Error(`后端返回 ${proxyResponse.status}`);
+                } else {
+                    // === 分支 2: 原有逻辑 (100% 粘贴你的原代码) ===
+                    // 只要不是 Gemini 反代，全部走这里，逻辑和你发给我的一模一样
+                    
+                    // 构建酒馆后端代理 Payload
+                    const proxyPayload = {
+                        chat_completion_source: "custom",
+                        custom_url: apiUrl,
+                        reverse_proxy: apiUrl,
+                        proxy_password: apiKey,  // ✅ 始终赋值（可能为空字符串）
+
+                        // ✅ 基础 Headers
+                        custom_include_headers: {
+                            "Content-Type": "application/json"
+                        },
+
+                        model: model,
+                        messages: cleanMessages,
+                        temperature: temperature,
+                        max_tokens: maxTokens,
+                        stream: false,
+
+                        // 兼容性参数
+                        mode: 'chat',
+                        instruction_mode: 'chat'
+                    };
+
+                    // 🔑 只有当 Key 不为空时，才添加 Authorization Header
+                    // (注意：这里直接使用了函数作用域里的 authHeader 变量，正如你原代码写的)
+                    if (authHeader) {
+                        proxyPayload.custom_include_headers["Authorization"] = authHeader;
+                        console.log('🔑 [后端代理] Authorization Header 已添加 (有密码)');
+                    } else {
+                        console.log('🔓 [后端代理] 跳过 Authorization Header (无密码)');
+                    }
+
+                    console.log(`🌐 [后端代理] 目标: ${apiUrl} | 模型: ${model}`);
+
+                    const proxyResponse = await fetch('/api/backends/chat-completions/generate', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-Token': csrfToken
+                        },
+                        body: JSON.stringify(proxyPayload)
+                    });
+
+                    // 检查 HTTP 状态码
+                    if (proxyResponse.ok) {
+                        const data = await proxyResponse.json();
+                        // ✅ 这里保留了你的 parseApiResponse 调用
+                        const result = parseApiResponse(data);
+                        if (result.success) {
+                            console.log('✅ [后端代理] 成功');
+                            return result;
+                        }
+                        throw new Error('后端返回数据无法解析');
+                    }
+
+                    // 只有当 HTTP 状态码不是 2xx 时才读取错误信息
+                    const errText = await proxyResponse.text();
+                    console.warn(`⚠️ [后端代理失败] ${proxyResponse.status}: ${errText.substring(0, 200)}`);
+                    throw new Error(`后端返回 ${proxyResponse.status}`);
+                }
 
             } catch (e) {
                 console.error(`❌ [后端代理] 失败: ${e.message}`);
@@ -5721,12 +5788,13 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
             
             <label>API提供商：</label>
             <select id="api-provider" style="width:100%; padding:5px; border:1px solid #ddd; border-radius:4px; margin-bottom:10px;">
-                <optgroup label="━━━━ 需要后端代理 (解决CORS红字) ━━━━">
+                <optgroup label="━━━ 需要后端代理 ━━━">
                     <option value="local" ${API_CONFIG.provider === 'local' ? 'selected' : ''}>🔌 本地/内网 API</option>
+                    <option value="proxy_only" ${API_CONFIG.provider === 'proxy_only' ? 'selected' : ''}>🛠️ 反代</option>
                     <option value="openai" ${API_CONFIG.provider === 'openai' ? 'selected' : ''}>OpenAI 官方</option>
                     <option value="claude" ${API_CONFIG.provider === 'claude' ? 'selected' : ''}>Anthropic Claude 官方</option>
                 </optgroup>
-                <optgroup label="━━━━ 浏览器直连 (速度快) ━━━━">
+                <optgroup label="━━━ 浏览器直连 ━━━">
                     <option value="compatible" ${API_CONFIG.provider === 'compatible' ? 'selected' : ''}>☁️ 兼容端点 (中转/代理)</option>
                     <option value="deepseek" ${API_CONFIG.provider === 'deepseek' ? 'selected' : ''}>DeepSeek 官方</option>
                     <option value="gemini" ${API_CONFIG.provider === 'gemini' ? 'selected' : ''}>Google Gemini 官方</option>
@@ -5782,6 +5850,12 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
                     $('#api-model').val('gpt-3.5-turbo');
                     $('#api-url').attr('placeholder', '例如: http://127.0.0.1:7860');
                     $('#api-model').attr('placeholder', '例如: gpt-3.5-turbo');
+                } else if (provider === 'proxy_only') {
+                    // 独立反代：不自动填充特定死板的URL，但给个示例提示
+                    $('#api-url').attr('placeholder', '例如: http://127.0.0.1:8889');
+                    $('#api-model').attr('placeholder', '例如: gemini-2.5-pro');
+                    // 也可以给个默认值方便你改（可选）
+                    $('#api-url').val('http://127.0.0.1:8889/v1');
                 } else if (provider === 'compatible') {
                     // 兼容端点：不自动填充，保留用户输入
                     $('#api-url').attr('placeholder', '例如: https://api.xxx.com/v1 或 https://api.xxx.com/v1/chat/completions');
@@ -5802,291 +5876,203 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
                 }
             });
 
-            $('#fetch-models-btn').on('click', async function () {
+            // ✨✨✨ 智能拉取模型 (鉴权修复版) ✨✨✨
+            $('#fetch-models-btn').off('click').on('click', async function () {
                 const btn = $(this);
                 const originalText = btn.text();
                 btn.text('拉取中...').prop('disabled', true);
 
                 // ========================================
-                // 1️⃣ IP 自动修正 + 参数获取
+                // 1. 获取参数
                 // ========================================
                 let apiUrl = $('#api-url').val().trim();
-                const apiKey = $('#api-key').val().trim();  // 保持原值（可能为空）
-                let authHeader = apiKey.startsWith('Bearer ') ? apiKey : ('Bearer ' + apiKey);
-                const provider = $('#api-provider').val();
-
-                // 🔧 强制替换 0.0.0.0 为 127.0.0.1（浏览器兼容性）
-                if (apiUrl.includes('0.0.0.0')) {
-                    apiUrl = apiUrl.replace(/0\.0\.0\.0/g, '127.0.0.1');
-                    console.log('🔧 [IP修正] 0.0.0.0 -> 127.0.0.1:', apiUrl);
+                const apiKey = $('#api-key').val().trim();
+                
+                // ✅ 核心修复：提前构造鉴权头 (Bearer sk-...)
+                // 这一点是之前漏掉的，导致部分中转站不认账
+                let authHeader = undefined;
+                if (apiKey) {
+                    authHeader = apiKey.startsWith('Bearer ') ? apiKey : ('Bearer ' + apiKey);
                 }
 
-                // 🔧 URL 处理：使用统一工具函数
-                apiUrl = processApiUrl(apiUrl, provider);
-                console.log('🔧 [URL处理完成]:', apiUrl);
+                const provider = $('#api-provider').val();
+
+                // 🔧 IP 修正
+                if (apiUrl.includes('0.0.0.0')) apiUrl = apiUrl.replace(/0\.0\.0\.0/g, '127.0.0.1');
+                
+                // 🔧 URL 智能补全
+                if (typeof processApiUrl === 'function') {
+                    apiUrl = processApiUrl(apiUrl, provider);
+                } else {
+                    apiUrl = apiUrl.replace(/\/+$/, '');
+                    if (provider !== 'gemini' && !apiUrl.includes('/v1') && !apiUrl.includes('/chat')) apiUrl += '/v1';
+                }
 
                 let models = [];
 
                 // ========================================
-                // 分流逻辑
+                // 2. 定义策略
                 // ========================================
-                const useProxy = (provider === 'local' || provider === 'openai' || provider === 'claude');
-                const useDirect = (provider === 'compatible' || provider === 'deepseek' || provider === 'gemini');
+                // 🔴 强制代理组
+                // 🔴 强制代理组
+                 const forceProxy = (provider === 'local' || provider === 'openai' || provider === 'claude' || provider === 'proxy_only');
+                
+                // 🟢 优先直连组 (兼容端点放这里，实现双保险)
+                const tryDirect = (provider === 'compatible' || provider === 'deepseek' || provider === 'gemini');
 
-                // ---------------------------------------------------------
-                // 通道 A: 后端代理 (local, openai, claude)
-                // ---------------------------------------------------------
-                if (useProxy) {
-                    try {
-                        console.log('📡 [后端代理模式] 通过酒馆后端拉取模型...');
-                        const csrfToken = await getCsrfToken();
+                // ========================================
+                // 3. 封装后端代理逻辑 (修复 Header 问题)
+                // ========================================
+                const runProxyRequest = async () => {
+                    console.log('📡 [后端代理] 正在通过酒馆后端转发请求...');
+                    const csrfToken = await getCsrfToken();
+                    
+                    // ✅ 构造显式 Headers (关键修复)
+                    const customHeaders = {
+                        "Content-Type": "application/json"
+                    };
+                    if (authHeader) {
+                        customHeaders["Authorization"] = authHeader;
+                    }
 
-                        // ========================================
-                        // 2️⃣ 构建请求 Payload（严格按照抓包格式）
-                        // ========================================
-                        const proxyPayload = {
-                            chat_completion_source: 'custom',
-                            custom_url: apiUrl,
-                            reverse_proxy: apiUrl,
-                            proxy_password: apiKey,  // 唯一的鉴权字段
-                            custom_include_headers: ""  // ⚠️ 必须是空字符串！
-                        };
+                    const proxyPayload = {
+                        chat_completion_source: 'custom',
+                        custom_url: apiUrl,
+                        reverse_proxy: apiUrl,
+                        proxy_password: apiKey, 
+                        // ✅ 把鉴权头塞进去，确保中转站能收到 Key
+                        custom_include_headers: customHeaders 
+                    };
 
-                        console.log('📤 [请求目标]:', apiUrl);
-                        console.log('🔑 [鉴权方式] 通过 proxy_password 字段传递:', apiKey ? '已设置' : '未设置');
+                    const response = await fetch('/api/backends/chat-completions/status', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                        body: JSON.stringify(proxyPayload)
+                    });
 
-                        const response = await fetch('/api/backends/chat-completions/status', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-CSRF-Token': csrfToken,
-                                'Cache-Control': 'no-cache',
-                                'Pragma': 'no-cache'
-                            },
-                            cache: 'no-store',
-                            body: JSON.stringify(proxyPayload)
-                        });
+                    if (response.ok) {
+                        const rawData = await response.json();
+                        // 尝试解析
+                        try { models = parseOpenAIModelsResponse(rawData); } catch (e) { }
+                        
+                        // 兜底解析
+                        if (models.length === 0) {
+                            if (rawData?.data && Array.isArray(rawData.data)) models = rawData.data;
+                            else if (rawData?.models && Array.isArray(rawData.models)) models = rawData.models;
+                            else if (Array.isArray(rawData)) models = rawData;
+                        }
+                        
+                        models = models.map(m => ({ id: m.id || m.model || m.name, name: m.name || m.id || m.model }));
 
-                        if (response.ok) {
-                            const rawData = await response.json();
+                        if (models.length > 0) {
+                            console.log(`✅ [后端代理] 成功获取 ${models.length} 个模型`);
+                            finish(models);
+                            return true; 
+                        }
+                    }
+                    throw new Error(`后端代理请求失败: ${response.status}`);
+                };
 
-                            // ========================================
-                            // 4️⃣ 解析逻辑（parseOpenAIModelsResponse + 兜底）
-                            // ========================================
-                            try {
-                                models = parseOpenAIModelsResponse(rawData);
-                            } catch (parseError) {
-                                console.warn('⚠️ [解析失败] 尝试兜底逻辑...', parseError);
+                // ========================================
+                // 4. 执行逻辑
+                // ========================================
+                try {
+                    // 🚀 路径 A: 强制代理
+                    if (forceProxy) {
+                        await runProxyRequest();
+                        return;
+                    }
 
-                                // 兜底 1: data.data.data (嵌套格式)
-                                if (rawData?.data?.data && Array.isArray(rawData.data.data)) {
-                                    models = rawData.data.data.map(m => ({ id: m.id || m.model, name: m.name || m.id || m.model }));
+                    // 🚀 路径 B: 尝试直连 (带自动降级)
+                    if (tryDirect) {
+                        try {
+                            console.log('🌍 [尝试] 浏览器直连模式...');
+                            let directUrl = `${apiUrl}/models`;
+                            let headers = { 'Content-Type': 'application/json' };
+
+                            // 针对不同厂商处理 Key
+                            if (provider === 'gemini') {
+                                if (apiUrl.includes('googleapis.com')) {
+                                    directUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+                                } else {
+                                    if (authHeader) headers['Authorization'] = authHeader;
                                 }
-                                // 兜底 2: data.data (标准格式)
-                                else if (rawData?.data && Array.isArray(rawData.data)) {
-                                    models = rawData.data.map(m => ({ id: m.id || m.model, name: m.name || m.id || m.model }));
-                                }
-                                // 兜底 3: data.models (Gemini 格式)
-                                else if (rawData?.models && Array.isArray(rawData.models)) {
-                                    models = rawData.models.map(m => ({ id: m.id || m.model, name: m.name || m.id || m.model }));
-                                }
-                                // 兜底 4: 直接是数组
-                                else if (Array.isArray(rawData)) {
-                                    models = rawData.map(m => ({ id: m.id || m.model, name: m.name || m.id || m.model }));
-                                }
+                            } else {
+                                // 兼容端点/DeepSeek
+                                if (authHeader) headers['Authorization'] = authHeader;
+                            }
+
+                            const resp = await fetch(directUrl, { method: 'GET', headers: headers });
+                            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                            
+                            const data = await resp.json();
+                            
+                            if (provider === 'gemini' && data.models) {
+                                models = data.models.map(m => ({ id: m.name.replace('models/', ''), name: m.displayName || m.name }));
+                            } else {
+                                models = parseOpenAIModelsResponse(data);
                             }
 
                             if (models.length > 0) {
-                                console.log(`✅ [后端代理] 成功获取 ${models.length} 个模型`);
+                                console.log(`✅ [浏览器直连] 成功获取 ${models.length} 个模型`);
                                 finish(models);
                                 return;
-                            } else {
-                                console.warn('⚠️ [后端代理] 解析后模型列表为空');
-                                throw new Error('解析后模型列表为空，请检查 API 返回格式');
                             }
-                        } else {
-                            const errText = await response.text();
-                            console.error(`❌ [后端代理] HTTP ${response.status}: ${errText.substring(0, 300)}`);
-                            throw new Error(`后端代理返回 ${response.status}: ${errText.substring(0, 100)}`);
+                            throw new Error('解析结果为空');
+
+                        } catch (directErr) {
+                            console.warn(`⚠️ [直连失败] ${directErr.message}`);
+
+                            // ⚡⚡⚡ 核心逻辑：Compatible 失败后自动呼叫后端救兵 ⚡⚡⚡
+                            if (provider === 'compatible') {
+                                console.log('🔄 [自动降级] 直连失败，正在切换到酒馆后端代理...');
+                                if (typeof toastr !== 'undefined') toastr.warning('浏览器直连失败，尝试后端转发...', '自动降级', { timeOut: 2000 });
+                                
+                                await runProxyRequest(); // <--- 调用带Header的后端请求
+                                return;
+                            }
+                            
+                            throw directErr; 
                         }
-                    } catch (e) {
-                        console.error(`❌ [后端代理] 错误:`, e);
-                        toastrOrAlert(`后端代理失败: ${e.message}\n\n💡 提示：\n1. 检查 API 地址是否正确 (0.0.0.0 已自动替换为 127.0.0.1)\n2. 检查 API 密钥是否正确\n3. 确认本地 API 服务是否运行`, '拉取失败', 'error');
-                        btn.text(originalText).prop('disabled', false);
-                        return;
                     }
+
+                } catch (e) {
+                    console.error('❌ 拉取失败:', e);
+                    let msg = `拉取失败: ${e.message}`;
+                    if (e.message.includes('Failed to fetch')) msg += '\n\n💡 可能是跨域(CORS)问题，且后端代理也无法连接。';
+                    toastrOrAlert(msg, '错误', 'error');
+                    btn.text(originalText).prop('disabled', false);
                 }
 
-                // ---------------------------------------------------------
-                // 通道 B: 浏览器直连 (compatible, deepseek, gemini)
-                // ---------------------------------------------------------
-                if (useDirect) {
-                    try {
-                        console.log('🌍 [浏览器直连模式] 直接请求目标 API...');
-
-                        let directUrl = '';
-                        let headers = {
-                            'Content-Type': 'application/json',
-                            'Cache-Control': 'no-cache',
-                            'Pragma': 'no-cache'
-                        };
-
-                        if (provider === 'gemini') {
-                            // ✅ Gemini 特殊处理：使用 ?key=API_KEY
-                            if (apiUrl.includes('googleapis.com')) {
-                                directUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-                            } else {
-                                // 自定义 Gemini 代理
-                                directUrl = `${apiUrl}/models`;
-                                headers['Authorization'] = authHeader;
-                            }
-                        } else {
-                            // ✅ compatible/deepseek: 拼接 /models
-                            directUrl = `${apiUrl}/models`;
-                            headers['Authorization'] = authHeader;
-                        }
-
-                        console.log(`🔗 [浏览器直连] 目标地址: ${directUrl.replace(apiKey, '***')}`);
-
-                        const resp = await fetch(directUrl, {
-                            method: 'GET',
-                            headers: headers,
-                            cache: 'no-store'
-                        });
-
-                        if (!resp.ok) {
-                            const errText = await resp.text();
-                            throw new Error(`HTTP ${resp.status}: ${errText.substring(0, 100)}`);
-                        }
-
-                        const data = await resp.json();
-
-                        // 解析数据
-                        if (provider === 'gemini' && data.models) {
-                            models = data.models.map(m => ({ id: m.name.replace('models/', ''), name: m.displayName || m.name }));
-                        } else {
-                            try {
-                                models = parseOpenAIModelsResponse(data);
-                            } catch (parseError) {
-                                console.warn('⚠️ [解析失败] 尝试兜底逻辑...', parseError);
-
-                                // 兜底逻辑（同上）
-                                if (data?.data && Array.isArray(data.data)) {
-                                    models = data.data.map(m => ({ id: m.id || m.model, name: m.name || m.id || m.model }));
-                                } else if (data?.models && Array.isArray(data.models)) {
-                                    models = data.models.map(m => ({ id: m.id || m.model, name: m.name || m.id || m.model }));
-                                } else if (Array.isArray(data)) {
-                                    models = data.map(m => ({ id: m.id || m.model, name: m.name || m.id || m.model }));
-                                }
-                            }
-                        }
-
-                        if (models.length > 0) {
-                            console.log(`✅ [浏览器直连] 成功获取 ${models.length} 个模型`);
-                            finish(models);
-                            return;
-                        } else {
-                            throw new Error('解析后模型列表为空');
-                        }
-
-                    } catch (e) {
-                        console.error(`❌ [浏览器直连] 失败:`, e);
-
-                        let errorMsg = `直连失败: ${e.message}`;
-                        if (e.message.includes('Failed to fetch') ||
-                            e.message.includes('NetworkError') ||
-                            e.message.includes('CORS')) {
-                            errorMsg += '\n\n💡 可能是 CORS 跨域问题，建议切换到 "🔌 本地/内网 API" 模式使用后端代理';
-                        }
-
-                        toastrOrAlert(errorMsg, '拉取失败', 'error');
-                        btn.text(originalText).prop('disabled', false);
-                        return;
-                    }
-                }
-
-                // ---------------------------------------------------------
-                // Claude 特殊处理：使用静态列表
-                // ---------------------------------------------------------
-                if (provider === 'claude') {
-                    const claudeModels = [
-                        { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (最新)' },
-                        { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },
-                        { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus' },
-                        { id: 'claude-3-sonnet-20240229', name: 'Claude 3 Sonnet' }
-                    ];
-                    console.log(`✅ [Claude] 使用静态模型列表`);
-                    finish(claudeModels);
-                    return;
-                }
-
-                // ---------------------------------------------------------
-                // 全部失败，切换手动模式
-                // ---------------------------------------------------------
-                console.log('⚠️ 全部失败，切换手动输入模式');
-                displayModelSelect([]);
-                toastrOrAlert('无法自动获取模型列表 (网络或鉴权限制)\n已切换为手动输入模式\n\n💡 提示：检查 API 地址格式和密钥', '提示', 'warning');
-                btn.text(originalText).prop('disabled', false);
-
-
-                // ========================================
-                // 5️⃣ UI 交互：渲染函数
-                // ========================================
                 function finish(list) {
                     displayModelSelect(list);
                     toastrOrAlert(`成功获取 ${list.length} 个模型`, '成功', 'success');
                     btn.text(originalText).prop('disabled', false);
                 }
 
-                // ========================================
-                // 辅助函数：显示模型下拉框
-                // ========================================
                 function displayModelSelect(models) {
                     const $select = $('#api-model-select');
                     const $input = $('#api-model');
                     $select.empty().append('<option value="__manual__">-- 手动输入 --</option>');
-
                     if (models.length > 0) {
-                        models.forEach(m => {
-                            $select.append(`<option value="${m.id}">${m.name || m.id}</option>`);
-                        });
-
-                        // 自动选中当前模型
-                        if (models.map(m => m.id).includes($input.val())) {
-                            $select.val($input.val());
-                        }
-
-                        $input.hide();
-                        $select.show();
-
+                        models.forEach(m => $select.append(`<option value="${m.id}">${m.name || m.id}</option>`));
+                        if (models.map(m => m.id).includes($input.val())) $select.val($input.val());
+                        $input.hide(); $select.show();
                         $select.off('change').on('change', function () {
                             const val = $(this).val();
-                            if (val === '__manual__') {
-                                $select.hide();
-                                $input.show().focus();
-                            } else {
-                                $input.val(val);
-                            }
+                            if (val === '__manual__') { $select.hide(); $input.show().focus(); } else { $input.val(val); }
                         });
                     } else {
-                        // 没有模型时，隐藏下拉框，显示输入框
-                        $select.hide();
-                        $input.show().focus();
+                        $select.hide(); $input.show().focus();
                     }
                 }
 
-                // ========================================
-                // 辅助函数：统一提示
-                // ========================================
-                function toastrOrAlert(message, title, type = 'info', timeout = 3000) {
-                    if (typeof toastr !== 'undefined') {
-                        toastr[type](message, title, { timeOut: timeout, preventDuplicates: true });
-                    } else {
-                        customAlert(message, title);
-                    }
+                function toastrOrAlert(message, title, type = 'info') {
+                    if (typeof toastr !== 'undefined') toastr[type](message, title);
+                    else customAlert(message, title);
                 }
             });
-
+            
             $('#save-api').on('click', async function () {
                 API_CONFIG.useIndependentAPI = $('input[name="api-mode"]:checked').val() === 'independent';
                 API_CONFIG.provider = $('#api-provider').val();
@@ -6445,17 +6431,11 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
 
         <div style="background: rgba(255,255,255,0.92); border-radius: 8px; padding: 10px; border: 1px solid rgba(255,255,255,0.4);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <label style="font-weight: 600;">💉 注入记忆表格</label>
+                <label style="font-weight: 600;">
+                    💉 注入记忆表格
+                    <i class="fa-solid fa-circle-info" id="memory-injection-info" style="margin-left: 6px; color: #17a2b8; cursor: pointer; font-size: 14px;"></i>
+                </label>
                 <input type="checkbox" id="c-table-inj" ${C.tableInj ? 'checked' : ''} style="transform: scale(1.2);">
-            </div>
-            
-           <div style="background: rgba(40, 167, 69, 0.1); border: 1px solid rgba(40, 167, 69, 0.3); padding: 8px; border-radius: 4px; margin-bottom: 10px; font-size: 11px; color: #155724;">
-                <strong>🌟 变量模式：</strong><br>
-                与实时填表搭配使用,在酒馆的【预设】中随机一处插入变量调整填表提示词、总结内容、表格内容在上下文的位置：<br>
-                • 实时填表插入变量(全部表单含总结)：<code style="background:rgba(255,255,255,0.5); color:#155724; padding:0 4px; border-radius:3px; font-weight:bold; user-select:text;">{{MEMORY}}</code> (跟随实时填表开关)<br>
-                • 表格插入变量(不含总结表)：<code style="background:rgba(255,255,255,0.5); color:#155724; padding:0 4px; border-radius:3px; font-weight:bold; user-select:text;">{{MEMORY_TABLE}}</code> (强制发送表格内容)<br>
-                • 总结插入变量(不含其他表格)：<code style="background:rgba(255,255,255,0.5); color:#155724; padding:0 4px; border-radius:3px; font-weight:bold; user-select:text;">{{MEMORY_SUMMARY}}</code> (强制发生总结内容)<br>
-                • 填表规则插入变量：<code style="background:rgba(255,255,255,0.5); color:#155724; padding:0 4px; border-radius:3px; font-weight:bold; user-select:text;">{{MEMORY_PROMPT}}</code><br>
             </div>
 
             <div style="font-size: 11px; opacity: 0.8; margin-bottom: 4px;">👇 备用方案 (当未找到 {{MEMORY}} 变量时)：</div>
@@ -6773,6 +6753,85 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
                 } else {
                     $('#auto-sum-settings').slideUp();
                 }
+            });
+
+            // 💉 注入记忆表格说明图标点击事件
+            $('#memory-injection-info').on('click', function () {
+                // 创建一个小型弹窗而不是使用pop
+                const $overlay = $('<div>', {
+                    // class: 'g-ov', <--- 删掉了这一行
+                    css: {
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        background: 'rgba(0, 0, 0, 0.2)',
+                        zIndex: 20000010,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: '20px'
+                    }
+                });
+
+                const $dialog = $('<div>', {
+                    css: {
+                        background: '#ffffff',
+                        borderRadius: '12px',
+                        padding: '20px',
+                        maxWidth: '500px',
+                        width: '90%',
+                        maxHeight: '80vh',
+                        overflow: 'auto',
+                        boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)',
+                        margin: 'auto'
+                    }
+                });
+
+                const $title = $('<div>', {
+                    html: '<strong style="font-size: 15px; color: #333;">💉 变量模式说明</strong>',
+                    css: { marginBottom: '15px', paddingBottom: '10px', borderBottom: '2px solid #f0f0f0' }
+                });
+
+                const $content = $('<div>', {
+                    css: { fontSize: '13px', lineHeight: '1.8', color: '#555' },
+                    html: `
+                        <div style="margin-bottom: 12px; font-weight: 600; color: #155724;">🌟 变量模式：</div>
+                        <div style="margin-bottom: 12px;">与实时填表搭配使用，在酒馆的【预设】中随机一处插入变量调整填表提示词、总结内容、表格内容在上下文的位置：</div>
+                        <div style="margin-bottom: 8px;">• 实时填表插入变量(全部表单含总结)：<code style="background:#f0f0f0; color:#155724; padding:2px 6px; border-radius:3px; font-weight:bold;">{{MEMORY}}</code> (跟随实时填表开关)</div>
+                        <div style="margin-bottom: 8px;">• 表格插入变量(不含总结表)：<code style="background:#f0f0f0; color:#155724; padding:2px 6px; border-radius:3px; font-weight:bold;">{{MEMORY_TABLE}}</code> (强制发送表格内容)</div>
+                        <div style="margin-bottom: 8px;">• 总结插入变量(不含其他表格)：<code style="background:#f0f0f0; color:#155724; padding:2px 6px; border-radius:3px; font-weight:bold;">{{MEMORY_SUMMARY}}</code> (强制发送总结内容)</div>
+                        <div>• 填表规则插入变量：<code style="background:#f0f0f0; color:#155724; padding:2px 6px; border-radius:3px; font-weight:bold;">{{MEMORY_PROMPT}}</code></div>
+                    `
+                });
+
+                const $closeBtn = $('<button>', {
+                    text: '知道了',
+                    css: {
+                        marginTop: '15px',
+                        padding: '8px 20px',
+                        background: UI.c || '#888',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 'bold',
+                        width: '100%'
+                    }
+                }).on('click', () => $overlay.remove());
+
+                $dialog.append($title, $content, $closeBtn);
+                $overlay.append($dialog);
+                $('body').append($overlay);
+
+                // 点击遮罩层也可以关闭
+                $overlay.on('click', function (e) {
+                    if (e.target === $overlay[0]) {
+                        $overlay.remove();
+                    }
+                });
             });
 
             $('#open-probe').on('click', function () {

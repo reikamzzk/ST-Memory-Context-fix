@@ -659,15 +659,15 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
     function customPrompt(message, defaultValue = '') {
         return new Promise((resolve) => {
             // 创建遮罩层
+            // 创建遮罩层
             const $overlay = $('<div>', {
-                class: 'g-ov',
                 css: {
                     position: 'fixed',
                     top: 0,
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    background: 'rgba(0, 0, 0, 0.5)',
+                    background: 'rgba(0, 0, 0, 0.2)',
                     zIndex: 10000010,
                     display: 'flex',
                     alignItems: 'center',
@@ -679,13 +679,16 @@ insertRow(0, {0: "2024年3月16日", 1: "凌晨(00:10)", 2: "", 3: "在古神殿
             const $dialog = $('<div>', {
                 class: 'g-p',
                 css: {
-                    background: 'rgba(255, 255, 255, 0.95)',
-                    backdropFilter: 'blur(10px)',
+                    background: '#ffffff',
                     borderRadius: '12px',
                     padding: '20px',
                     minWidth: '300px',
                     maxWidth: '90vw',
-                    boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)'
+                    boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)',
+                    margin: 'auto',  // ✨✨✨ 关键修复：强制在 flex 容器中自动居中
+                    position: 'relative', // 确保层级正确
+                    maxHeight: '80vh',    // 防止超高
+                    overflowY: 'auto'     // 内容过多可滚动
                 }
             });
 

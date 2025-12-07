@@ -14,7 +14,7 @@
     bottom: 0 !important;
     width: 100vw !important;
     height: 100vh !important;
-    background: rgba(0, 0, 0, 0.35) !important;
+    background: rgba(0, 0, 0, 0.6) !important;
     z-index: 999999 !important;
     overflow: hidden !important;
     display: flex !important;
@@ -22,17 +22,6 @@
     justify-content: center !important;
     padding: 10px !important;
     box-sizing: border-box !important;
-}
-
-.g-ov::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    backdrop-filter: blur(1.5px);
-    pointer-events: none;
 }
 
 .g-w {
