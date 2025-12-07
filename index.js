@@ -4427,55 +4427,57 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
 
             logMsg = `📝 聊天总结: ${startIndex}-${endIndex} (消息数:${messages.length})`;
 
-        }
-        // 1. 写入 NSFW 破限提示词
-        messages.push({
-            role: 'system',
-            content: window.Gaigai.PromptManager.resolveVariables(
-                window.Gaigai.PromptManager.get('nsfwPrompt'),
-                ctx
-            )
-        });
-
-        // 2. 写入历史总结 (按行发送)
-        if (m.sm.has()) {
-            const summaryArray = m.sm.loadArray();
-            const recentSummaries = summaryArray.slice(-15);
-            recentSummaries.forEach((item) => {
-                messages.push({
-                    role: 'system',
-                    content: `【前情提要 - ${item.type || '历史'}】\n${item.content}`
-                });
-            });
         } else {
-            messages.push({ role: 'system', content: '【前情提要】\n（暂无历史总结）' });
-        }
+            // === 场景 B: 总结表格模式 ===
+            // 1. 写入 NSFW 破限提示词
+            messages.push({
+                role: 'system',
+                content: window.Gaigai.PromptManager.resolveVariables(
+                    window.Gaigai.PromptManager.get('nsfwPrompt'),
+                    ctx
+                )
+            });
 
-        // 3. 写入详情表格 (分区发送，动态表名)
-        let hasTableData = false;
-        m.s.slice(0, 8).forEach((sheet, i) => {
-            if (sheet.r.length > 0) {
-                hasTableData = true;
-                const sheetName = sheet.n;
-                const sheetContent = sheet.txt(i);
-
-                messages.push({
-                    role: 'system',
-                    content: `【待总结的表格 - ${sheetName}】\n${sheetContent}`
+            // 2. 写入历史总结 (按行发送)
+            if (m.sm.has()) {
+                const summaryArray = m.sm.loadArray();
+                const recentSummaries = summaryArray.slice(-15);
+                recentSummaries.forEach((item) => {
+                    messages.push({
+                        role: 'system',
+                        content: `【前情提要 - ${item.type || '历史'}】\n${item.content}`
+                    });
                 });
+            } else {
+                messages.push({ role: 'system', content: '【前情提要】\n（暂无历史总结）' });
             }
-        });
 
-        if (!hasTableData) {
-            messages.push({ role: 'system', content: '【待总结的表格数据】\n（表格为空）' });
+            // 3. 写入详情表格 (分区发送，动态表名)
+            let hasTableData = false;
+            m.s.slice(0, 8).forEach((sheet, i) => {
+                if (sheet.r.length > 0) {
+                    hasTableData = true;
+                    const sheetName = sheet.n;
+                    const sheetContent = sheet.txt(i);
+
+                    messages.push({
+                        role: 'system',
+                        content: `【待总结的表格 - ${sheetName}】\n${sheetContent}`
+                    });
+                }
+            });
+
+            if (!hasTableData) {
+                messages.push({ role: 'system', content: '【待总结的表格数据】\n（表格为空）' });
+            }
+            console.log('✅ [总结] 表格数据已按[分区模式]写入');
+
+            // 4. 写入 User 指令
+            const summaryInstruction = targetPrompt;
+            messages.push({ role: 'user', content: summaryInstruction });
+
+            logMsg = '📝 表格总结';
         }
-        console.log('✅ [总结] 表格数据已按[分区模式]写入');
-
-        // 4. 写入 User 指令
-        const summaryInstruction = targetPrompt;
-        messages.push({ role: 'user', content: summaryInstruction });
-
-        logMsg = '📝 表格总结';
 
         console.log('✅ [Instruction-Last] 总结任务已采用后置指令模式');
         console.log(logMsg);
@@ -5333,6 +5335,8 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
 
                             if (done) {
                                 console.log('✅ [流式模式] 接收完成');
+                                // ✅ Flush 解码器缓存，防止最后一段字符丢失
+                                buffer += decoder.decode();
                                 break;
                             }
 
@@ -5397,6 +5401,11 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
                                     } catch (parseErr) {
                                         console.warn('⚠️ [流式解析] JSON 解析失败:', parseErr.message);
                                         console.warn('   原始内容 (前100字符):', jsonStr.substring(0, 100));
+                                        // ✅ 容错：尝试将原始内容作为纯文本追加，防止数据丢失
+                                        if (jsonStr && jsonStr.trim() && !jsonStr.includes('[DONE]')) {
+                                            fullText += jsonStr;
+                                            console.log('📝 [容错处理] 已将无法解析的内容作为纯文本追加，长度:', jsonStr.length);
+                                        }
                                     }
                                 } else if (trimmed && !trimmed.startsWith(':')) {
                                     console.warn('⚠️ [流式解析] 无法识别的行格式 (前50字符):', trimmed.substring(0, 50));
@@ -5443,6 +5452,12 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
                                                 }
                                             } catch (parseErr) {
                                                 console.warn('⚠️ [流式解析] 剩余 buffer JSON 解析失败:', parseErr.message);
+                                                // ✅ 容错：尝试将原始内容作为纯文本追加，防止数据丢失
+                                                console.log('📝 [容错处理] 尝试将剩余 buffer 作为纯文本处理');
+                                                if (jsonStr && jsonStr.trim()) {
+                                                    fullText += jsonStr;
+                                                    console.log('✅ [容错处理] 已追加剩余文本，长度:', jsonStr.length);
+                                                }
                                             }
                                         }
                                     }
