@@ -103,7 +103,7 @@
     background: none;
     border: none;
     font-size: 22px;
-    color: #999;
+    color: var(--g-tc); /* 跟随主题字体颜色 */
     cursor: pointer;
     padding: 0;
     width: 24px;
@@ -113,7 +113,8 @@
 }
 
 .g-x:hover {
-    color: #333;
+    color: var(--g-tc); /* 跟随主题字体颜色 */
+    opacity: 0.7;
     transform: rotate(90deg);
 }
 
@@ -164,7 +165,8 @@
     cursor: pointer;
     border-radius: 5px 5px 0 0;
     font-size: 12px;
-    color: #666;
+    color: var(--g-tc); /* 跟随主题字体颜色 */
+    opacity: 0.7; /* 未激活的标签稍微淡一点 */
     white-space: nowrap;
     flex-shrink: 0;
     transition: all 0.2s;
@@ -177,7 +179,8 @@
 
 .g-t.act {
     background: var(--g-c);
-    color: #fff;
+    color: var(--g-tc); /* 跟随主题字体颜色 */
+    opacity: 1;
     font-weight: 600;
 }
 
@@ -204,7 +207,7 @@
 .g-tl button {
     padding: 6px 12px;
     background: var(--g-c);
-    color: #fff;
+    color: var(--g-tc); /* 跟随主题字体颜色 */
     border: none;
     border-radius: 4px;
     cursor: pointer;
@@ -257,6 +260,7 @@
 /* 视图设置 - 琥珀色 */
 #g-reset-width {
     background: linear-gradient(135deg, #ffc107 0%, #ffa000 100%);
+    color: #fff; /* 黄色背景需要白色文字 */
     font-weight: 500;
 }
 
@@ -267,9 +271,9 @@
 }
 
 /* 主操作 - 主题色 */
-#g-ad, #g-ex { 
-    background: linear-gradient(135deg, var(--g-c) 0%, #8b3a3a 100%);
-    color: #fff;
+#g-ad, #g-ex {
+    background: var(--g-c); /* 使用纯主题色，不用渐变避免颜色冲突 */
+    color: var(--g-tc); /* 跟随主题字体颜色 */
 }
 
 /* ========== 平板/窄屏优化 (601px - 900px) ========== */
@@ -618,7 +622,7 @@
     padding: 8px 6px;
     text-align: center !important;
     background: var(--g-c);
-    color: #fff;
+    color: var(--g-tc); /* 跟随主题字体颜色 */
     font-weight: 600;
     font-size: 10px;
     white-space: nowrap;
@@ -727,18 +731,19 @@
 .g-n {
     display: flex !important;
     flex-direction: column !important;
-    
+
     /* ✨ 核心：垂直居中 (因为方向是 column，所以用 justify-content 控制垂直) */
-    justify-content: center !important; 
+    justify-content: center !important;
     align-items: center !important;
-    
+
     width: 100% !important;
     height: 100% !important;
     padding: 0 !important; /* ✨ 重点：去掉内边距，防止把容器撑大导致偏离 */
     box-sizing: border-box !important;
-    
+
     background: rgba(0, 0, 0, 0.03) !important;
-    color: #999;
+    color: var(--g-tc); /* 跟随主题字体颜色 */
+    opacity: 0.6; /* 行号颜色稍微淡一点 */
     font-weight: 600;
     user-select: none !important;
 }
@@ -764,37 +769,37 @@
     display: none !important;
 }
 
-.g-e { 
+.g-e {
     /* 1. 填满格子 (改回绝对定位，修复电脑端撑大无法回缩) */
     position: absolute !important;
     top: 0 !important;
     left: 0 !important;
-    width: 100% !important; 
-    height: 100% !important; 
-    
+    width: 100% !important;
+    height: 100% !important;
+
     /* 2. ⚡️⚡️⚡️ 核心修复：手机端滚动卡死/脱节 */
     /* 强制开启 GPU 硬件加速，让文字层跟紧表格滚动 */
     transform: translateZ(0) !important;
     will-change: transform;
 
     /* 3. 允许换行 */
-    white-space: pre-wrap !important; 
-    word-break: break-all !important; 
-    
+    white-space: pre-wrap !important;
+    word-break: break-all !important;
+
     /* 4. 样式调整 */
     padding: 2px 4px !important;
     line-height: 1.4 !important;
-    font-size: var(--g-fs, 12px) !important; 
-    color: #333 !important; 
-    
+    font-size: var(--g-fs, 12px) !important;
+    color: var(--g-tc) !important; /* 跟随主题字体颜色 */
+
     /* 5. 去掉干扰 */
-    border: none !important; 
-    background: transparent !important; 
+    border: none !important;
+    background: transparent !important;
     resize: none !important;
-    z-index: 1 !important; 
-    
+    z-index: 1 !important;
+
     /* 溢出隐藏 */
-    overflow: hidden !important; 
+    overflow: hidden !important;
 }
 
 .g-e:hover {
@@ -925,7 +930,7 @@
     padding: 6px 12px;
     margin: 8px 8px 0 0;
     background: var(--g-c);
-    color: #fff;
+    color: var(--g-tc); /* 跟随主题字体颜色 */
     border: none;
     border-radius: 4px;
     cursor: pointer;
