@@ -515,6 +515,12 @@
             const ctx = window.SillyTavern.getContext();
             if (!ctx || !ctx.chat) return { success: false, reason: 'no_context' };
 
+            // 🛑 新增：空卡熔断保护
+            if (ctx.chat.length === 0) {
+                console.log('🛑 [自动填表] 检测到聊天记录为空（新卡），已跳过执行。');
+                return { success: true }; // 返回成功以免触发重试逻辑
+            }
+
             console.log(`🔍 [追溯] 正在读取数据源，全量总楼层: ${ctx.chat.length}，目标表格：${targetIndex === -1 ? '全部' : '表' + targetIndex}`);
             const m = window.Gaigai.m;
             m.load();
