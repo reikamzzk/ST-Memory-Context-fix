@@ -388,6 +388,17 @@
             const tables = m.all().slice(0, 8).filter(s => s.r.length > 0);
             const ctx = window.SillyTavern.getContext();
 
+            // 🛑 新增：空卡熔断保护
+            if (!ctx || !ctx.chat || ctx.chat.length === 0) {
+                if (!isSilent) {
+                    // 如果是手动点击，才提示错误
+                    await window.Gaigai.customAlert('⚠️ 聊天记录为空，无法进行总结。', '提示');
+                } else {
+                    console.log('🛑 [自动总结] 检测到聊天记录为空，已跳过。');
+                }
+                return { success: false, error: 'empty_chat' };
+            }
+
             // 获取角色名
             let userName = ctx.name1 || 'User';
             let charName = 'Character';
