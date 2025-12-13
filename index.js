@@ -8425,7 +8425,11 @@ console.log('📍 [Gaigai] 动态定位插件路径:', EXTENSION_PATH);
                         📢 本次更新内容 (v${cleanVer})
                     </h4>
                     <ul style="margin:0; padding-left:20px; font-size:12px; color:${textColor}; opacity:0.9;">
-                        <li><strong> 优化世界书同步：</strong> 世界书条目按照总结页数进行新增，点击强制同步世界书一键覆盖旧内容</li>
+                        <li><strong> 新增夜间模式：</strong>在主题内可切换夜间模式</li>
+                        <li><strong> 优化API稳定性：</strong>将Deepseek渠道改为酒馆后端，避免CORS限制。</li>
+                        <li><strong> 优化追溯功能：</strong>对已经记录的表单单独进行优化。主要用于可整理、删除、合并</li>
+                        <li><strong> 优化提示词：</strong>优化部分提示词</li>
+                        <li><strong> 优化数据丢失：</strong>加强数据隔离和污染,加强记录数据的稳定性防止丢失。</li>
                     </ul>
                 </div>
 
