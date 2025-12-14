@@ -3251,6 +3251,7 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
             flex: 1;
             overflow-y: auto;
             padding: 10px;
+            padding-bottom: 60px;
         }
 
         /* 单个目录项 */
