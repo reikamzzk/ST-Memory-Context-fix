@@ -1213,7 +1213,13 @@
                 summarizedRows = {}; // ✅ 核心修复：清空"已总结行"状态，防止跨会话串味
                 userColWidths = {};   // ✅ 核心修复：清空列宽设置，防止跨会话串味
                 userRowHeights = {};  // ✅ 核心修复：清空行高设置，防止跨会话串味
-                console.log(`🔄 [会话切换] ID: ${id}，已重置所有状态 (包括已总结行、列宽、行高)`);
+
+                // ✅ [修复] 会话切换时，重置进度指针（防止跨会话污染）
+                API_CONFIG.lastSummaryIndex = 0;
+                API_CONFIG.lastBackfillIndex = 0;
+                localStorage.setItem(AK, JSON.stringify(API_CONFIG));
+
+                console.log(`🔄 [会话切换] ID: ${id}，已重置所有状态 (包括已总结行、列宽、行高、进度指针)`);
             }
             let cloudData = null; let localData = null;
             if (C.cloudSync) { try { const ctx = this.ctx(); if (ctx && ctx.chatMetadata && ctx.chatMetadata.gaigai) cloudData = ctx.chatMetadata.gaigai; } catch (e) { } }
@@ -1259,13 +1265,11 @@
 
                     // 同步回全局配置，确保 shcf 显示正确
                     localStorage.setItem(AK, JSON.stringify(API_CONFIG));
-                } else {
-                    // 🔴 新增逻辑（针对旧版存档）：有数据但无 meta，强制重置指针为 0
-                    API_CONFIG.lastSummaryIndex = 0;
-                    API_CONFIG.lastBackfillIndex = 0;
-                    localStorage.setItem(AK, JSON.stringify(API_CONFIG));
-                    console.log('⚙️ [兼容旧存档] 进度指针重置为 0');
+                    console.log(`✅ [进度恢复] 总结指针: ${API_CONFIG.lastSummaryIndex}, 填表指针: ${API_CONFIG.lastBackfillIndex}`);
                 }
+                // ✅ [修复] 删除了旧版的强制归零逻辑
+                // 如果存档中没有 meta 信息，保持当前内存中的配置不变
+                // 这样可以兼容旧版存档，同时不会丢失用户的进度
 
                 // ✅ Per-Chat Configuration: STEP 2 - Override with chat-specific config
                 if (finalData.config) {
@@ -1278,21 +1282,12 @@
                 }
 
                 lastInternalSaveTime = finalData.ts;
-            } else {
-                // ✅✅✅ [指针污染修复] 新会话无存档时，重置 API 进度指针，防止跨会话污染
-                API_CONFIG.lastSummaryIndex = 0;
-                API_CONFIG.lastBackfillIndex = 0;
-                localStorage.setItem(AK, JSON.stringify(API_CONFIG));
-
-                // ☁️ 同步到云端，确保跨设备一致性
-                if (typeof saveAllSettingsToCloud === 'function') {
-                    saveAllSettingsToCloud().catch(err => {
-                        console.warn('⚠️ [指针重置] 云端同步失败:', err);
-                    });
-                }
-
-                console.log(`🆕 [新会话] ID: ${id}，已重置 API 进度指针 (lastSummaryIndex=0, lastBackfillIndex=0)`);
             }
+            // ✅ [修复] 删除了 finalData 为 null 时强制归零的逻辑
+            // 理由：
+            // 1. 会话切换时已经在 1217-1220 行重置了进度指针
+            // 2. 如果是同一会话但没有存档数据（例如临时加载失败），应该保持当前内存中的值
+            // 3. 避免因临时性的数据读取失败而丢失用户的进度
         }
 
         gid() {
@@ -6482,9 +6477,18 @@ const useDirect = (provider === 'compatible' || provider === 'gemini');
         const ctx = m.ctx();
         const totalCount = ctx && ctx.chat ? ctx.chat.length : 0;
 
-        // 智能归零逻辑（仅在聊天记录已加载时执行，防止误重置）
-        if (totalCount > 0 && (API_CONFIG.lastSummaryIndex === undefined || API_CONFIG.lastSummaryIndex > totalCount)) API_CONFIG.lastSummaryIndex = 0;
-        if (totalCount > 0 && (API_CONFIG.lastBackfillIndex === undefined || API_CONFIG.lastBackfillIndex > totalCount)) API_CONFIG.lastBackfillIndex = 0;
+        // ✅ 智能修正逻辑：如果指针超出范围，修正到当前最大值（而不是归零）
+        if (totalCount > 0 && API_CONFIG.lastSummaryIndex > totalCount) {
+            console.log(`⚠️ [进度修正] 总结指针超出范围，已修正为 ${totalCount}（原值: ${API_CONFIG.lastSummaryIndex}）`);
+            API_CONFIG.lastSummaryIndex = totalCount;
+        }
+        if (totalCount > 0 && API_CONFIG.lastBackfillIndex > totalCount) {
+            console.log(`⚠️ [进度修正] 填表指针超出范围，已修正为 ${totalCount}（原值: ${API_CONFIG.lastBackfillIndex}）`);
+            API_CONFIG.lastBackfillIndex = totalCount;
+        }
+        // ✅ 如果指针未定义，初始化为 0
+        if (API_CONFIG.lastSummaryIndex === undefined) API_CONFIG.lastSummaryIndex = 0;
+        if (API_CONFIG.lastBackfillIndex === undefined) API_CONFIG.lastBackfillIndex = 0;
 
         const lastIndex = API_CONFIG.lastSummaryIndex;
         const lastBf = API_CONFIG.lastBackfillIndex;
@@ -7447,6 +7451,20 @@ const useDirect = (provider === 'compatible' || provider === 'gemini');
                             console.log(`⚡ [写入] 识别到 ${cs.length} 条指令，正在写入表格...`);
                             exe(cs);
                             m.save(); // 保存到本地存储
+
+                            // ✅ [修复重复处理] 更新进度指针，防止自动总结和批量填表重复处理该楼层
+                            API_CONFIG.lastSummaryIndex = i;
+                            API_CONFIG.lastBackfillIndex = i;
+                            localStorage.setItem(AK, JSON.stringify(API_CONFIG));
+
+                            // ✅ 同步到云端，防止 loadConfig 回滚
+                            if (typeof saveAllSettingsToCloud === 'function') {
+                                saveAllSettingsToCloud().catch(err => {
+                                    console.warn('⚠️ [实时填表] 云端同步失败:', err);
+                                });
+                            }
+
+                            console.log(`✅ [实时填表] 进度指针已更新至第 ${i} 楼`);
                         } else {
                             console.log(`Testing: 第 ${i} 楼无指令，保持基准状态。`);
                         }

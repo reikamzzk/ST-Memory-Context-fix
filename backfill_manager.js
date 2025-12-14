@@ -28,8 +28,11 @@
             // ✅ 读取追溯进度（不是总结进度）
             const API_CONFIG = window.Gaigai.config;
             let savedIndex = API_CONFIG.lastBackfillIndex || 0;
-            // ✅ 智能归零逻辑（仅在聊天记录已加载时执行，防止误重置）
-            if (totalCount > 0 && savedIndex > totalCount) savedIndex = 0;
+            // ✅ 智能修正逻辑：如果指针超出范围，修正到当前最大值（而不是归零）
+            if (totalCount > 0 && savedIndex > totalCount) {
+                savedIndex = totalCount;
+                console.log(`⚠️ [进度修正] 填表指针超出范围，已修正为 ${totalCount}（原值: ${API_CONFIG.lastBackfillIndex}）`);
+            }
             const defaultStart = savedIndex;
 
             // 🆕 构建表格下拉选项
