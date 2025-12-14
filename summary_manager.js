@@ -501,6 +501,7 @@
                 console.log('📊 [优化] 聊天总结不发送表格状态，专注聊天记录');
 
                 // 6. 聊天记录
+                const targetSlice = ctx.chat.slice(startIndex, endIndex);
                 const cleanMemoryTags = window.Gaigai.cleanMemoryTags;
                 const filterContentByTags = window.Gaigai.tools.filterContentByTags; // ✅ 修复：使用正确的引用路径
                 let validMsgCount = 0;
