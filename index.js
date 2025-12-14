@@ -1577,47 +1577,84 @@
     }
 
     function parseOpenAIModelsResponse(data) {
-        /** @type {any[]} */
-        let rawModels = [];
-        try {
-            // 1) 顶层数组
-            if (Array.isArray(data)) {
-                rawModels = data;
-            }
-            // 2) 常见包装 { data: [...] }
-            else if (Array.isArray(data?.data)) {
-                rawModels = data.data;
-            }
-            // 3) { models: [...] }
-            else if (Array.isArray(data?.models)) {
-                rawModels = data.models;
-            }
-            // 4) 更深层 { data: { data: [...] } }
-            else if (Array.isArray(data?.data?.data)) {
-                rawModels = data.data.data;
-            }
-            // 5) 兜底：对象内第一个数组字段
-            else if (data && typeof data === 'object') {
-                for (const val of Object.values(data)) {
-                    if (Array.isArray(val)) { rawModels = val; break; }
-                }
-            }
-        } catch {
-            // ignore extraction errors;
+        // 1. 预处理：如果是字符串，尝试解析为对象（应对双重序列化）
+        if (typeof data === 'string') {
+            try { data = JSON.parse(data); } catch (e) { return []; }
         }
 
-        // MakerSuite/Gemini 专用过滤：若对象包含 supportedGenerationMethods，则仅保留包含 'generateContent' 的模型
+        if (!data) return [];
+
+        /** @type {any[]} */
+        let candidates = [];
+
+        // 2. 搜集所有可能的数组 (广度优先搜索，限制深度防止卡死)
+        const queue = [{ node: data, depth: 0 }];
+        while (queue.length > 0) {
+            const { node, depth } = queue.shift();
+            
+            if (depth > 3) continue; // 不扫描太深
+
+            if (Array.isArray(node)) {
+                candidates.push(node);
+            } else if (node && typeof node === 'object') {
+                // 将对象的值加入队列
+                for (const key of Object.keys(node)) {
+                    // 忽略明显不是数据的字段
+                    if (key === 'error' || key === 'usage' || key === 'created') continue;
+                    queue.push({ node: node[key], depth: depth + 1 });
+                }
+            }
+        }
+
+        // 3. 评分机制：找出最像模型列表的数组
+        let bestArray = [];
+        let maxScore = -1;
+
+        for (const arr of candidates) {
+            if (arr.length === 0) continue;
+
+            let score = 0;
+            let validItemCount = 0;
+
+            // 抽样检查前5个元素
+            const sampleSize = Math.min(arr.length, 5);
+            for (let i = 0; i < sampleSize; i++) {
+                const item = arr[i];
+                if (typeof item === 'string') {
+                    // 纯字符串数组 ['gpt-4', 'claude-2']
+                    validItemCount++;
+                } else if (item && typeof item === 'object') {
+                    // 对象数组，检查特征键
+                    if ('id' in item || 'model' in item || 'name' in item || 'displayName' in item || 'slug' in item) {
+                        validItemCount++;
+                    }
+                }
+            }
+
+            // 评分公式：命中率高 > 长度长
+            if (validItemCount > 0) {
+                // 如果大部分抽样元素都有效，则该数组得分 = 数组长度
+                // 这里加权 validItemCount 是为了防止误判纯数字数组等干扰项
+                score = (validItemCount / sampleSize) * 1000 + arr.length;
+            }
+
+            if (score > maxScore) {
+                maxScore = score;
+                bestArray = arr;
+            }
+        }
+
+        // 4. MakerSuite/Gemini 专用过滤
+        // 若对象包含 supportedGenerationMethods，则仅保留包含 'generateContent' 的模型
         try {
-            rawModels = (rawModels || []).filter(m => {
+            bestArray = bestArray.filter(m => {
                 const methods = m && typeof m === 'object' ? m.supportedGenerationMethods : undefined;
                 return Array.isArray(methods) ? methods.includes('generateContent') : true;
             });
-        } catch {
-            // ignore filter errors
-        }
+        } catch { }
 
-        // 映射与归一化
-        let models = (rawModels || [])
+        // 5. 映射与归一化
+        let models = bestArray
             .filter(m => m && (typeof m === 'string' || typeof m === 'object'))
             .map(m => {
                 if (typeof m === 'string') {
@@ -1627,19 +1664,19 @@
                 // 兼容多字段 id
                 let id = m.id || m.name || m.model || m.slug || '';
 
-                // 去掉常见前缀，例如 Google 风格的 'models/'
+                // 去掉常见前缀
                 if (typeof id === 'string' && id.startsWith('models/')) {
                     id = id.replace(/^models\//, '');
                 }
 
+                // 优先取 displayName，其次取 name/id
                 const name = m.displayName || m.name || m.id || id || undefined;
-                // 简化映射，只保留 ID 和 name
 
                 return id ? { id, name } : null;
             })
             .filter(Boolean);
 
-        // 去重（按 id）
+        // 6. 去重（按 id）
         const seen = new Set();
         models = models.filter(m => {
             if (seen.has(m.id)) return false;
@@ -1647,7 +1684,7 @@
             return true;
         });
 
-        // 排序（按 id 升序）
+        // 7. 排序（按 id 升序）
         models.sort((a, b) => a.id.localeCompare(b.id));
 
         return models;
@@ -5312,8 +5349,8 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
         // ========================================
         // 分流逻辑
         // ========================================
-const useProxy = (provider === 'local' || provider === 'openai' || provider === 'claude'|| provider === 'proxy_only' || provider === 'deepseek'|| provider === 'siliconflow');
-const useDirect = (provider === 'compatible' || provider === 'gemini');
+const useProxy = (provider === 'local' || provider === 'openai' || provider === 'claude'|| provider === 'proxy_only' || provider === 'deepseek'|| provider === 'siliconflow' || provider === 'compatible');
+const useDirect = (provider === 'gemini');
 
        // ==========================================
         // 🔴 通道 A: 后端代理 (local, openai, claude, proxy_only)
@@ -5379,31 +5416,37 @@ const useDirect = (provider === 'compatible' || provider === 'gemini');
                     throw new Error(`反代修复模式报错: ${errText}`);
 
                 } else {
-                    // === 分支 2: 标准 Custom 协议 (本地反代 + OpenAI + Claude 等) ===
-                    // 包括：本地反代(local)、OpenAI、Claude 等标准后端代理
-
-                    // === 智能分流修复 (Key优先级 + 404修复) ===
+        
+                   // === 智能分流修复 (V1.3.9 核心修正) ===
                     
-                    // 1. URL 清洗：OpenAI 模式会自动加 /chat/completions，如果用户填了，要剪掉
+                    // 1. 确定模式 (Source)
+                    // 抓包显示：兼容端点(compatible)、反代(proxy_only)、本地(local) 必须走 'custom' 模式
+                    // 只有 OpenAI 官方/DeepSeek/SiliconFlow 等才走 'openai' 模式
+                    let targetSource = 'openai'; 
+                    if (provider === 'claude') targetSource = 'claude';
+                    if (provider === 'compatible' || provider === 'proxy_only' || provider === 'local') targetSource = 'custom';
+
+                    // 2. URL 清洗
+                    // OpenAI 模式会自动加 /chat/completions，如果用户填了要剪掉
+                    // Custom 模式则原样保留，不做处理
                     let cleanBaseUrl = apiUrl;
-                    if (cleanBaseUrl.endsWith('/chat/completions')) {
+                    if (targetSource === 'openai' && cleanBaseUrl.endsWith('/chat/completions')) {
                         cleanBaseUrl = cleanBaseUrl.replace(/\/chat\/completions\/?$/, '');
                     }
 
-                    // 2. 确定模式：Claude 用 claude，其他(OpenAI/DeepSeek/反代)全用 openai
-                    let targetSource = 'openai';
-                    if (provider === 'claude') targetSource = 'claude';
-
-                    // 构建酒馆后端代理 Payload
+                    // 3. 构建完全复刻酒馆行为的 Payload
                     const proxyPayload = {
                         chat_completion_source: targetSource,
-                        reverse_proxy: cleanBaseUrl,
+                        
+                        // 关键修复：Custom 模式依赖 custom_url，OpenAI 模式依赖 reverse_proxy
+                        // 我们两个都填上，酒馆后端会各取所需，确保万无一失
+                        reverse_proxy: cleanBaseUrl, 
+                        custom_url: apiUrl, 
+
+                        // OpenAI 模式用这个传 Key
                         proxy_password: apiKey,
                         
-                        // 兼容字段 (留着保险)
-                        custom_url: apiUrl,
-
-                        // ✅ 基础 Headers
+                        // Custom 模式用这个传 Key (通过 Header 注入)
                         custom_include_headers: {
                             "Content-Type": "application/json"
                         },
@@ -5435,16 +5478,17 @@ const useDirect = (provider === 'compatible' || provider === 'gemini');
                         proxyPayload.gemini_safety_settings = proxyPayload.safety_settings;
                     }
 
-                    // 🔑 只有当 Key 不为空时，才添加 Authorization Header
-                    // (注意：这里直接使用了函数作用域里的 authHeader 变量，正如你原代码写的)
+                    // 4. 动态鉴权头处理 (关键修复！)
+                    // 源码证实：Custom模式下，酒馆后端不读取 proxy_password，只从 custom_include_headers 合并
+                    // 所以我们必须手动把 Key 塞进 Header 里，否则请求会报 401/403
                     if (authHeader) {
                         proxyPayload.custom_include_headers["Authorization"] = authHeader;
-                        console.log('🔑 [后端代理] Authorization Header 已添加 (有密码)');
+                        console.log('🔑 [后端代理] Authorization Header 已注入 (适配 Custom 模式)');
                     } else {
                         console.log('🔓 [后端代理] 跳过 Authorization Header (无密码)');
                     }
 
-                    console.log(`🌐 [后端代理] 目标: ${apiUrl} | 模型: ${model}`);
+                    console.log(`🌐 [后端代理] 目标: ${apiUrl} | 模式: ${targetSource} | 模型: ${model}`);
 
                     const proxyResponse = await fetch('/api/backends/chat-completions/generate', {
                         method: 'POST',
@@ -6253,6 +6297,7 @@ const useDirect = (provider === 'compatible' || provider === 'gemini');
             <label>API提供商：</label>
             <select id="api-provider" style="width:100%; padding:5px; border:1px solid #ddd; border-radius:4px; margin-bottom:10px;">
                 <optgroup label="━━━ 后端代理 ━━━">
+                    <option value="compatible" ${API_CONFIG.provider === 'compatible' ? 'selected' : ''}>兼容端点 (中转/代理)</option>
                     <option value="local" ${API_CONFIG.provider === 'local' ? 'selected' : ''}>本地/内网（本地反代）</option>
                     <option value="proxy_only" ${API_CONFIG.provider === 'proxy_only' ? 'selected' : ''}>反代(如build)</option>
                     <option value="openai" ${API_CONFIG.provider === 'openai' ? 'selected' : ''}>OpenAI 官方</option>
@@ -6261,7 +6306,6 @@ const useDirect = (provider === 'compatible' || provider === 'gemini');
                     <option value="siliconflow" ${API_CONFIG.provider === 'siliconflow' ? 'selected' : ''}>硅基流动 (SiliconFlow)</option>
                 </optgroup>
                 <optgroup label="━━━ 浏览器直连 ━━━">
-                    <option value="compatible" ${API_CONFIG.provider === 'compatible' ? 'selected' : ''}>兼容端点 (中转/代理)</option>
                     <option value="gemini" ${API_CONFIG.provider === 'gemini' ? 'selected' : ''}>Google Gemini 官方</option>
                 </optgroup>
             </select>
