@@ -955,7 +955,7 @@
                                 html: '🗑️ 删除已总结内容<br><span style="font-size:10px; font-weight:normal; opacity:0.8;">(清空表格，防止重复)</span>',
                                 css: {
                                     background: isDark ? 'rgba(255,255,255,0.05)' : 'transparent',
-                                    color: textColor,
+                                    color: 'var(--g-tc)',
                                     border: `1px solid ${themeColor}`,
                                     borderRadius: '8px',
                                     padding: '12px 16px',
@@ -974,7 +974,7 @@
                                 html: '🙈 仅隐藏 (变绿)<br><span style="font-size:10px; font-weight:normal; opacity:0.8;">(保留内容但标记为已处理)</span>',
                                 css: {
                                     background: isDark ? 'rgba(255,255,255,0.05)' : 'transparent',
-                                    color: textColor,
+                                    color: 'var(--g-tc)',
                                     border: `1px solid ${themeColor}`,
                                     borderRadius: '8px',
                                     padding: '12px 16px',
