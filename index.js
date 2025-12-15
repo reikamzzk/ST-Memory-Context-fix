@@ -73,7 +73,7 @@
         enableAI: false,
         useIndependentAPI: false,
         provider: 'openai',
-        apiUrl: 'https://api.openai.com/v1/chat/completions',
+        apiUrl: '',
         apiKey: '',
         model: 'gemini-2.5-pro',
         temperature: 0.7,
@@ -6319,10 +6319,10 @@ let useDirect = (provider === 'gemini');
             <label>API提供商：</label>
             <select id="api-provider" style="width:100%; padding:5px; border:1px solid #ddd; border-radius:4px; margin-bottom:10px;">
                 <optgroup label="━━━ 后端代理 ━━━">
+                    <option value="openai" ${API_CONFIG.provider === 'openai' ? 'selected' : ''}>OpenAI 兼容模式/OpenAI 官方</option>
                     <option value="compatible" ${API_CONFIG.provider === 'compatible' ? 'selected' : ''}>兼容中转/代理</option>
                     <option value="local" ${API_CONFIG.provider === 'local' ? 'selected' : ''}>本地/内网（本地反代）</option>
                     <option value="proxy_only" ${API_CONFIG.provider === 'proxy_only' ? 'selected' : ''}>反代(如build)</option>
-                    <option value="openai" ${API_CONFIG.provider === 'openai' ? 'selected' : ''}>OpenAI 兼容模式/OpenAI 官方</option>
                     <option value="claude" ${API_CONFIG.provider === 'claude' ? 'selected' : ''}>Claude 官方</option>
                     <option value="deepseek" ${API_CONFIG.provider === 'deepseek' ? 'selected' : ''}>DeepSeek 官方</option>
                     <option value="siliconflow" ${API_CONFIG.provider === 'siliconflow' ? 'selected' : ''}>硅基流动 (SiliconFlow)</option>
@@ -6395,39 +6395,46 @@ let useDirect = (provider === 'gemini');
 
             $('#api-provider').on('change', function () {
                 const provider = $(this).val();
-                // 仅在用户主动切换下拉框时，才自动填充官方默认值
+                
+                // ✅ 核心修改：只修改 placeholder (提示文字)，绝不自动填充 val (实际值)
+                // 这样用户必须手动填入地址，不会误以为已经填好了。
+
+                // 先清空当前的 placeholder，防止残留
+                $('#api-url').attr('placeholder', '请输入 API 地址 (Base URL)...');
+                $('#api-model').attr('placeholder', '请输入模型名称...');
+
                 if (provider === 'local') {
-                    // local 模式：本地/内网 API (强制后端代理)
-                    $('#api-url').val('http://127.0.0.1:7860/v1');
-                    $('#api-model').val('gpt-3.5-turbo');
-                    $('#api-url').attr('placeholder', '例如: http://127.0.0.1:7860');
+                    // local 模式
+                    $('#api-url').attr('placeholder', '例如: http://127.0.0.1:7860/v1');
                     $('#api-model').attr('placeholder', '例如: gpt-3.5-turbo');
                 } else if (provider === 'proxy_only') {
-                    // 独立反代：不自动填充特定死板的URL，但给个示例提示
-                    $('#api-url').attr('placeholder', '例如: http://127.0.0.1:8889');
+                    // 独立反代
+                    $('#api-url').attr('placeholder', '例如: http://127.0.0.1:8889/v1');
                     $('#api-model').attr('placeholder', '例如: gemini-2.5-pro');
-                    // 也可以给个默认值方便你改（可选）
-                    $('#api-url').val('http://127.0.0.1:8889');
                 } else if (provider === 'compatible') {
-                    // 兼容端点：不自动填充，保留用户输入
-                    $('#api-url').attr('placeholder', '例如: https://api.xxx.com/v1 或 https://api.xxx.com/v1/chat/completions');
-                    $('#api-model').attr('placeholder', '例如: gpt-4o, deepseek-chat, 或自定义模型名');
+                    // 兼容端点
+                    $('#api-url').attr('placeholder', '例如: https://api.xxx.com/v1');
+                    $('#api-model').attr('placeholder', '例如: gpt-4o, deepseek-chat');
                 } else if (provider === 'openai') {
-                    $('#api-url').val('https://api.openai.com/v1');
-                    $('#api-model').val('gpt-3.5-turbo');
+                    // OpenAI
+                    $('#api-url').attr('placeholder', '例如: https://api.openai.com/v1');
+                    $('#api-model').attr('placeholder', '例如: gpt-4o');
                 } else if (provider === 'deepseek') {
-                    $('#api-url').val('https://api.deepseek.com/v1');
-                    $('#api-model').val('deepseek-chat');
+                    // DeepSeek
+                    $('#api-url').attr('placeholder', '例如: https://api.deepseek.com/v1');
+                    $('#api-model').attr('placeholder', '例如: deepseek-chat');
                 } else if (provider === 'siliconflow') {
-                    $('#api-url').val('https://api.siliconflow.cn/v1');
-                    $('#api-model').val('deepseek-ai/DeepSeek-V3'); 
+                    // 硅基流动
+                    $('#api-url').attr('placeholder', '例如: https://api.siliconflow.cn/v1');
+                    $('#api-model').attr('placeholder', '例如: deepseek-ai/DeepSeek-V3'); 
                 } else if (provider === 'gemini') {
-                    // Gemini 使用纯净的 Base URL，插件会自动拼接 /models/{model}:generateContent
-                    $('#api-url').val('https://generativelanguage.googleapis.com/v1beta');
-                    $('#api-model').val('gemini-1.5-flash');
+                    // Gemini
+                    $('#api-url').attr('placeholder', '例如: https://generativelanguage.googleapis.com/v1beta');
+                    $('#api-model').attr('placeholder', '例如: gemini-1.5-flash');
                 } else if (provider === 'claude') {
-                    $('#api-url').val('https://api.anthropic.com/v1/messages');
-                    $('#api-model').val('claude-3-5-sonnet-20241022');
+                    // Claude
+                    $('#api-url').attr('placeholder', '例如: https://api.anthropic.com/v1/messages');
+                    $('#api-model').attr('placeholder', '例如: claude-3-5-sonnet-20241022');
                 }
             });
 
@@ -6475,33 +6482,40 @@ let useDirect = (provider === 'gemini');
                 const tryDirect = (provider === 'compatible' || provider === 'gemini');
 
                 // ========================================
-                // 3. 封装后端代理逻辑 (修复 Header 问题)
+                // 3. 封装后端代理逻辑 (修复 Header 问题 & 独立地址隔离)
                 // ========================================
                 const runProxyRequest = async () => {
                     console.log('📡 [后端代理] 正在通过酒馆后端转发请求...');
                     const csrfToken = await getCsrfToken();
                     
-                    // ✅ 构造显式 Headers (关键修复)
-                    const customHeaders = {
-                        "Content-Type": "application/json"
-                    };
-                    if (authHeader) {
-                        customHeaders["Authorization"] = authHeader;
-                    }
-
-                    // 智能判断模式，修复拉取失败
+                    // 1. 先判断目标源
                     let targetSource = 'custom';
-                    // ✨ 修复：兼容端点 (compatible) 也强制走 openai 模式，让酒馆自动处理鉴权
-                    if (provider === 'openai' || provider === 'deepseek' || provider === 'siliconflow' || provider === 'compatible') {
+                    // 只有官方 OpenAI/DeepSeek/SiliconFlow 才走 openai 模式 (酒馆自动处理鉴权)
+                    if (provider === 'openai' || provider === 'deepseek' || provider === 'siliconflow') {
                         targetSource = 'openai';
                     }
 
+                    // 2. 构造 Headers
+                    const customHeaders = {
+                        "Content-Type": "application/json"
+                    };
+
+                    // 3. 【关键修改】鉴权逻辑分离
+                    // 只有在 'custom' 模式下，我们才手动把 Key 塞进 Header
+                    // 如果是 'openai' 模式，酒馆会自动读取 proxy_password 生成 Header，我们不要插手，防止冲突
+                    if (targetSource === 'custom' && authHeader) {
+                        customHeaders["Authorization"] = authHeader;
+                    }
+
                     const proxyPayload = {
-                        chat_completion_source: targetSource, // ✅ 这里改成变量，不再死板写 custom
-                        custom_url: apiUrl,
-                        reverse_proxy: apiUrl,
+                        chat_completion_source: targetSource,
+                        custom_url: apiUrl,       // custom 模式下生效
+                        reverse_proxy: apiUrl,    // openai 模式下生效
+                        
+                        // openai 模式：酒馆读取这个字段
                         proxy_password: apiKey, 
-                        // ✅ 把鉴权头塞进去，确保中转站能收到 Key
+                        
+                        // custom 模式：酒馆读取这个字段里面的 Authorization
                         custom_include_headers: customHeaders 
                     };
 
