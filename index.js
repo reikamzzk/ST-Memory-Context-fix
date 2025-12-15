@@ -1,5 +1,5 @@
 // ========================================================================
-// 记忆表格 v1.3.8
+// 记忆表格 v1.3.9
 // SillyTavern 记忆管理系统 - 提供表格化记忆、自动总结、批量填表等功能
 // ========================================================================
 (function () {
@@ -15,13 +15,13 @@
     }
     window.GaigaiLoaded = true;
 
-    console.log('🚀 记忆表格 v1.3.8 启动');
+    console.log('🚀 记忆表格 v1.3.9 启动');
 
     // ===== 防止配置被后台同步覆盖的标志 =====
     window.isEditingConfig = false;
 
     // ==================== 全局常量定义 ====================
-    const V = 'v1.3.8';
+    const V = 'v1.3.9';
     const SK = 'gg_data';              // 数据存储键
     const UK = 'gg_ui';                // UI配置存储键
     const AK = 'gg_api';               // API配置存储键
@@ -5350,7 +5350,7 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
         // 分流逻辑
         // ========================================
 const useProxy = (provider === 'local' || provider === 'openai' || provider === 'claude'|| provider === 'proxy_only' || provider === 'deepseek'|| provider === 'siliconflow' || provider === 'compatible');
-const useDirect = (provider === 'gemini');
+let useDirect = (provider === 'gemini');
 
        // ==========================================
         // 🔴 通道 A: 后端代理 (local, openai, claude, proxy_only)
@@ -5365,8 +5365,12 @@ const useDirect = (provider === 'gemini');
 
                 // ✨✨✨【修复插入点：智能拦截】✨✨✨
                 // 只有当：提供商是"网页反代" (proxy_only) 且 模型名含"gemini"时，才走 Makersuite 修复路
-                // 本地反代 (local) 走标准 custom 协议
-                const isProxyGemini = (provider === 'proxy_only') && model.toLowerCase().includes('gemini');
+                // ✨ 修复：排除本地地址 (127.0.0.1/localhost)。
+                // 如果用户用 gcli 等本地转接工具，应该走下面的通用 OpenAI/Custom 协议，那里有完善的安全注入。
+                const isProxyGemini = (provider === 'proxy_only') && 
+                                      model.toLowerCase().includes('gemini') && 
+                                      !apiUrl.includes('127.0.0.1') && 
+                                      !apiUrl.includes('localhost');
 
                 if (isProxyGemini) {
                     // === 分支 1: 针对网页端 Gemini 反代 (MakerSuite 修复逻辑) ===
@@ -5387,6 +5391,7 @@ const useDirect = (provider === 'gemini');
                         stream: false,
                         custom_prompt_post_processing: "strict",
                         use_makersuite_sysprompt: true,
+                        // ✅ 标准 Gemini 格式
                         safetySettings: [
                             { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
                             { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -5394,6 +5399,11 @@ const useDirect = (provider === 'gemini');
                             { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
                         ]
                     };
+
+                    // ✨ [双重保险] 同时注入 OpenAI 格式的安全设置
+                    // 防止某些魔改的 Makersuite 反代其实底层是 OpenAI 接口
+                    proxyPayload.safety_settings = proxyPayload.safetySettings;
+                    proxyPayload.gemini_safety_settings = proxyPayload.safetySettings;
 
                     const proxyResponse = await fetch('/api/backends/chat-completions/generate', {
                         method: 'POST',
@@ -5424,8 +5434,12 @@ const useDirect = (provider === 'gemini');
                     // 只有 OpenAI 官方/DeepSeek/SiliconFlow 等才走 'openai' 模式
                     let targetSource = 'openai'; 
                     if (provider === 'claude') targetSource = 'claude';
-                    if (provider === 'compatible' || provider === 'proxy_only' || provider === 'local') targetSource = 'custom';
-
+                    
+                    // ✨ 修复：把 compatible 移出 custom 组。
+                    // 只有纯反代(proxy_only)和本地(local)才走 custom。
+                    // compatible (兼容端点) 保持默认的 'openai' 模式，这样酒馆才会正确处理 Key。
+                    if (provider === 'proxy_only' || provider === 'local') targetSource = 'custom';
+                    
                     // 2. URL 清洗
                     // OpenAI 模式会自动加 /chat/completions，如果用户填了要剪掉
                     // Custom 模式则原样保留，不做处理
@@ -5519,10 +5533,19 @@ const useDirect = (provider === 'gemini');
 
             } catch (e) {
                 console.error(`❌ [后端代理] 失败: ${e.message}`);
-                return {
-                    success: false,
-                    error: `后端代理失败: ${e.message}\n\n💡 提示：检查 API 地址和密钥是否正确`
-                };
+                
+               // ✨✨✨ 修复：兼容端点 AND OpenAI兼容模式 都支持自动降级 ✨✨✨
+            if (provider === 'compatible' || provider === 'openai') {
+                    console.warn('⚠️ [自动降级] 后端代理失败，正在尝试浏览器直连...');
+                    useDirect = true; // 打开直连开关
+                    // 注意：这里不要 return，让代码继续向下执行，就会进入下面的 if (useDirect) 块
+                } else {
+                    // 其他模式（如 local）失败了直接报错
+                    return {
+                        success: false,
+                        error: `后端代理失败: ${e.message}\n\n💡 提示：检查 API 地址和密钥是否正确`
+                    };
+                }
             }
         }
 
@@ -6297,10 +6320,10 @@ const useDirect = (provider === 'gemini');
             <label>API提供商：</label>
             <select id="api-provider" style="width:100%; padding:5px; border:1px solid #ddd; border-radius:4px; margin-bottom:10px;">
                 <optgroup label="━━━ 后端代理 ━━━">
-                    <option value="compatible" ${API_CONFIG.provider === 'compatible' ? 'selected' : ''}>兼容端点 (中转/代理)</option>
+                    <option value="compatible" ${API_CONFIG.provider === 'compatible' ? 'selected' : ''}>兼容中转/代理</option>
                     <option value="local" ${API_CONFIG.provider === 'local' ? 'selected' : ''}>本地/内网（本地反代）</option>
                     <option value="proxy_only" ${API_CONFIG.provider === 'proxy_only' ? 'selected' : ''}>反代(如build)</option>
-                    <option value="openai" ${API_CONFIG.provider === 'openai' ? 'selected' : ''}>OpenAI 官方</option>
+                    <option value="openai" ${API_CONFIG.provider === 'openai' ? 'selected' : ''}>OpenAI 兼容模式/OpenAI 官方</option>
                     <option value="claude" ${API_CONFIG.provider === 'claude' ? 'selected' : ''}>Claude 官方</option>
                     <option value="deepseek" ${API_CONFIG.provider === 'deepseek' ? 'selected' : ''}>DeepSeek 官方</option>
                     <option value="siliconflow" ${API_CONFIG.provider === 'siliconflow' ? 'selected' : ''}>硅基流动 (SiliconFlow)</option>
@@ -6469,8 +6492,8 @@ const useDirect = (provider === 'gemini');
 
                     // 智能判断模式，修复拉取失败
                     let targetSource = 'custom';
-                    // 如果是 DeepSeek/OpenAI/硅基流动，强制用 openai 模式，这样才会请求 /models
-                    if (provider === 'openai' || provider === 'deepseek' || provider === 'siliconflow') {
+                    // ✨ 修复：兼容端点 (compatible) 也强制走 openai 模式，让酒馆自动处理鉴权
+                    if (provider === 'openai' || provider === 'deepseek' || provider === 'siliconflow' || provider === 'compatible') {
                         targetSource = 'openai';
                     }
 
