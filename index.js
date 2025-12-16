@@ -1497,53 +1497,54 @@
         }
     }
 
-    // ✅✅✅ [核心修复] 强力回档函数 (防止快照污染 - 深拷贝版)
+    // ✅✅✅ [核心修复] 强力回档函数 (最终逻辑修正版)
     function restoreSnapshot(msgIndex) {
         try {
-            // 1. 兼容处理：无论传入的是数字还是字符串，都统一处理
             const key = msgIndex.toString();
             const snapshot = snapshotHistory[key];
 
+            // 1. 基础检查：快照是否存在
             if (!snapshot) {
-                console.warn(`⚠️ [回档失败] 找不到快照ID: ${key}`);
+                // 允许静默失败，这在刚启动时很正常
                 return false;
             }
 
-            // 🛡️ [过期保护] 检查快照是否早于最后一次手动修改
-            // 同步读取 window.lastManualEditTime（可能被 backfill_manager.js 更新）
+            // 🛡️ [过期保护 - 核心逻辑]
+            // 如果 "快照生成时间" 早于 "用户最后一次手动编辑/清空的时间"
+            // 说明这个快照已经过时了，不能用它来覆盖用户的最新操作
             const currentManualEditTime = window.lastManualEditTime || lastManualEditTime;
             if (snapshot.timestamp < currentManualEditTime) {
-                console.log(`🛡️ [保护] 检测到手动修改，跳过过时快照回滚 (快照:${new Date(snapshot.timestamp).toLocaleTimeString()}, 修改:${new Date(currentManualEditTime).toLocaleTimeString()})`);
+                console.log(`🛡️ [保护] 检测到手动修改(或清空)，跳过过时快照回滚。快照时间:${snapshot.timestamp} < 操作时间:${currentManualEditTime}`);
                 return false;
             }
 
-            // 2. 先彻底清空当前表格，防止残留
+            // 2. 先彻底清空当前表格
+            // (只要通过了上面的时间戳检查，说明这个空状态是合法的，或者是AI生成的最新状态)
             m.s.slice(0, 8).forEach(sheet => sheet.r = []);
 
             // 3. ✨✨✨ [关键修复] 强力深拷贝恢复 ✨✨✨
-            // 旧代码是 m.s[i].from(sd)，这会导致当前表格和快照“连体”
-            // 现在我们把快照里的数据“复印”一份全新的给表格，互不干扰
+            // 将快照里的数据（哪怕是空的）复印一份给当前表格
             snapshot.data.forEach((sd, i) => {
                 if (i < 8 && m.s[i]) {
-                    // 创建复印件，而不是直接引用
                     const deepCopyData = JSON.parse(JSON.stringify(sd));
                     m.s[i].from(deepCopyData);
                 }
             });
 
-            // 4. 恢复总结状态 (同样深拷贝)
+            // 4. 恢复总结状态
             if (snapshot.summarized) {
                 summarizedRows = JSON.parse(JSON.stringify(snapshot.summarized));
             } else {
                 summarizedRows = {};
             }
 
-            // 5. 强制锁定保存，防止被酒馆的自动保存覆盖
+            // 5. 强制锁定保存
+            // 既然回档成功了，就重置编辑时间，防止死循环
             lastManualEditTime = 0;
-            m.save();
+            m.save(); // 保存到内存和云端
 
             const totalRecords = m.s.reduce((sum, s) => sum + s.r.length, 0);
-            console.log(`✅ [完美回档] 快照${key}已恢复 (深拷贝模式，拒绝污染) - 当前行数:${totalRecords}`);
+            console.log(`✅ [完美回档] 快照${key}已恢复 - 当前行数:${totalRecords}`);
 
             return true;
         } catch (e) {
@@ -6933,7 +6934,7 @@ let useDirect = (provider === 'gemini');
             if (!window.extension_settings) window.extension_settings = {};
             window.extension_settings.st_memory_table = allSettings;
             localStorage.setItem(CK, JSON.stringify(C));
-            localStorage.setItem(AK, JSON.stringify(cleanedApiConfig)); // ✅ Use cleaned config without progress pointers
+            localStorage.setItem(AK, JSON.stringify(API_CONFIG)); 
             localStorage.setItem(UK, JSON.stringify(UI));
             // ❌ 已删除：localStorage.setItem(PK, JSON.stringify(PROMPTS));
             // ✅ 预设数据现在由 PromptManager 管理，通过 profiles 保存
