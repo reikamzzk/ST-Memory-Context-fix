@@ -3528,7 +3528,8 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
 
         const tbs = ss.map((s, i) => {
             const count = s.r.length;
-            const displayName = i === 1 ? '支线剧情' : s.n;
+            //const displayName = i === 1 ? '支线剧情' : s.n;
+            const displayName = s.n;
             // ✨ 2. 根据记录的索引设置激活状态
             const isActive = i === activeTabIndex ? ' act' : '';
             return `<button class="g-t${isActive}" data-i="${i}">${displayName} (${count})</button>`;
@@ -5245,7 +5246,8 @@ updateRow(1, 0, {4: "王五销毁了图纸..."})
 
     function updateTabCount(ti) {
         const sh = m.get(ti);
-        const displayName = ti === 1 ? '支线剧情' : sh.n;
+        //const displayName = ti === 1 ? '支线剧情' : sh.n;
+        const displayName = sh.n;
         $(`.g-t[data-i="${ti}"]`).text(`${displayName} (${sh.r.length})`);
     }
 
